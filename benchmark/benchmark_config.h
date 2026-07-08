@@ -1,3 +1,6 @@
+#ifndef HOME_JIEFU_PROJECTS_RAMTOOLS_BENCHMARK_BENCHMARK_CONFIG_H
+#define HOME_JIEFU_PROJECTS_RAMTOOLS_BENCHMARK_BENCHMARK_CONFIG_H
+
 #pragma once
 
 // Shared command-line configuration for the RAMtools benchmark suite.
@@ -25,14 +28,16 @@
 #include "ramcore/SamToNTuple.h"
 #include "ramcore/SamToTTree.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
 
 namespace benchutil {
 
-class BenchmarkConfig {
+struct BenchmarkConfig {
 public:
+   // NOLINTBEGIN(cppcoreguidelines-non-private-member-variables-in-classes)
    std::string sam;         // empty => generate synthetic
    std::string ttreeRoot;   // empty => derive by converting sam
    std::string rntupleRoot; // empty => derive by converting sam
@@ -42,6 +47,7 @@ public:
    int reads = 100000;       // synthetic read count for fallback
    std::vector<int> regions; // explicit region indices for region_query
    bool allRegions = false;  // --regions=all
+   // NOLINTEND(cppcoreguidelines-non-private-member-variables-in-classes)
 
    // Parse and strip recognized "--key=value" flags from argv (compacting it in place
    // and lowering *argc), leaving --benchmark_* and other flags for the caller.
@@ -50,8 +56,8 @@ public:
       BenchmarkConfig cfg;
       int out = 1;
       for (int i = 1; i < *argc; ++i) {
-         if (!cfg.Consume(argv[i]))
-            argv[out++] = argv[i];
+         if (!cfg.Consume(argv[i])) // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+            argv[out++] = argv[i];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
       }
       *argc = out;
       return cfg;
@@ -78,8 +84,9 @@ public:
       if (m_genRntuple.empty()) {
          m_genRntuple = "bench_gen_rntuple.root";
          const std::string &s = EnsureSam();
-         ScopedStdoutSuppressor quiet(true);
-         samtoramntuple(s.c_str(), m_genRntuple.c_str(), true, true, true, compression, quality);
+         ScopedStdoutSuppressor quiet(/*suppress_stderr=*/true);
+         samtoramntuple(s.c_str(), m_genRntuple.c_str(), /*index=*/true, /*split=*/true, /*cache=*/true, compression,
+                        quality);
          m_created.push_back(m_genRntuple);
       }
       return m_genRntuple;
@@ -93,15 +100,16 @@ public:
       if (m_genTtree.empty()) {
          m_genTtree = "bench_gen_ttree.root";
          const std::string &s = EnsureSam();
-         ScopedStdoutSuppressor quiet(true);
-         samtoram(s.c_str(), m_genTtree.c_str(), true, true, true, 1, quality);
+         ScopedStdoutSuppressor quiet(/*suppress_stderr=*/true);
+         samtoram(s.c_str(), m_genTtree.c_str(), /*index=*/true, /*split=*/true, /*cache=*/true,
+                  /*compression_algorithm=*/1, quality);
          m_created.push_back(m_genTtree);
       }
       return m_genTtree;
    }
 
    // True when the user supplied a real SAM (vs. falling back to synthetic data).
-   bool HasRealDataset() const { return !sam.empty(); }
+   [[nodiscard]] bool HasRealDataset() const { return !sam.empty(); }
 
    void Cleanup()
    {
@@ -110,6 +118,11 @@ public:
       m_created.clear();
    }
 
+   BenchmarkConfig() = default;
+   BenchmarkConfig(const BenchmarkConfig &) = delete;
+   BenchmarkConfig &operator=(const BenchmarkConfig &) = delete;
+   BenchmarkConfig(BenchmarkConfig &&) = default;
+   BenchmarkConfig &operator=(BenchmarkConfig &&) = default;
    ~BenchmarkConfig() { Cleanup(); }
 
 private:
@@ -131,35 +144,35 @@ private:
    bool Consume(const std::string &arg)
    {
       std::string v;
-      if (Match(arg, "sam", v)) {
+      if (Match(arg, /*key=*/"sam", v)) {
          sam = v;
          return true;
       }
-      if (Match(arg, "ttree-root", v)) {
+      if (Match(arg, /*key=*/"ttree-root", v)) {
          ttreeRoot = v;
          return true;
       }
-      if (Match(arg, "rntuple-root", v)) {
+      if (Match(arg, /*key=*/"rntuple-root", v)) {
          rntupleRoot = v;
          return true;
       }
-      if (Match(arg, "compression", v)) {
+      if (Match(arg, /*key=*/"compression", v)) {
          compression = std::atoi(v.c_str());
          return true;
       }
-      if (Match(arg, "quality", v)) {
+      if (Match(arg, /*key=*/"quality", v)) {
          quality = static_cast<unsigned int>(std::strtoul(v.c_str(), nullptr, 10));
          return true;
       }
-      if (Match(arg, "threads", v)) {
+      if (Match(arg, /*key=*/"threads", v)) {
          threads = std::atoi(v.c_str());
          return true;
       }
-      if (Match(arg, "reads", v)) {
+      if (Match(arg, /*key=*/"reads", v)) {
          reads = std::atoi(v.c_str());
          return true;
       }
-      if (Match(arg, "regions", v)) {
+      if (Match(arg, /*key=*/"regions", v)) {
          ParseRegions(v);
          return true;
       }
@@ -188,3 +201,5 @@ private:
 };
 
 } // namespace benchutil
+
+#endif

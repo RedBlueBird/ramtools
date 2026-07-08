@@ -1,13 +1,17 @@
+#ifndef HOME_JIEFU_PROJECTS_RAMTOOLS_BENCHMARK_BENCHMARK_UTILS_H
+#define HOME_JIEFU_PROJECTS_RAMTOOLS_BENCHMARK_BENCHMARK_UTILS_H
+
 #pragma once
 
 #include <cstdio>
 #include <filesystem>
+#include <stdio.h> // NOLINT(modernize-deprecated-headers) - fileno is a POSIX extension, not in <cstdio>
 #include <string>
 
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
-#define NULL_DEVICE "NUL"
+constexpr const char *NULL_DEVICE = "NUL";
 #define BENCH_DUP _dup
 #define BENCH_DUP2 _dup2
 #define BENCH_FILENO _fileno
@@ -17,7 +21,7 @@
 #else
 #include <fcntl.h>
 #include <unistd.h>
-#define NULL_DEVICE "/dev/null"
+constexpr const char *NULL_DEVICE = "/dev/null";
 #define BENCH_DUP dup
 #define BENCH_DUP2 dup2
 #define BENCH_FILENO fileno
@@ -35,10 +39,10 @@ namespace benchutil {
 class ScopedStdoutSuppressor {
 public:
    explicit ScopedStdoutSuppressor(bool suppress_stderr = false)
+      : m_savedStdout(BENCH_DUP(BENCH_FILENO(stdout))),
+        m_devnull(BENCH_OPEN(NULL_DEVICE, BENCH_WRONLY)) // NOLINT(cppcoreguidelines-pro-type-vararg)
    {
       std::fflush(stdout);
-      m_savedStdout = BENCH_DUP(BENCH_FILENO(stdout));
-      m_devnull = BENCH_OPEN(NULL_DEVICE, BENCH_WRONLY);
       if (m_devnull >= 0)
          BENCH_DUP2(m_devnull, BENCH_FILENO(stdout));
       if (suppress_stderr && m_devnull >= 0) {
@@ -66,6 +70,8 @@ public:
 
    ScopedStdoutSuppressor(const ScopedStdoutSuppressor &) = delete;
    ScopedStdoutSuppressor &operator=(const ScopedStdoutSuppressor &) = delete;
+   ScopedStdoutSuppressor(ScopedStdoutSuppressor &&) = delete;
+   ScopedStdoutSuppressor &operator=(ScopedStdoutSuppressor &&) = delete;
 
 private:
    int m_savedStdout = -1;
@@ -94,3 +100,5 @@ inline void CleanupFiles(const std::string &pattern)
 }
 
 } // namespace benchutil
+
+#endif

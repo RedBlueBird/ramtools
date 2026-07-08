@@ -1,7 +1,8 @@
-#include <benchmark/benchmark.h>
 #include "benchmark_config.h"
 #include "benchmark_utils.h"
-#include <Rtypes.h>
+#include <RtypesCore.h>
+#include <benchmark/benchmark.h>
+#include <cstdint>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -42,9 +43,11 @@ RunQuery(benchmark::State &state, const std::string &file, const std::string &re
       // Suppress the per-call chatter (stopwatch + "Found N records") for the whole run;
       // constructed outside the timed loop so it adds no measured overhead.
       benchutil::ScopedStdoutSuppressor quiet;
-      for (auto _ : state) {
-         reads_in_this_run = rntuple ? ramntupleview(file.c_str(), region.c_str(), true, false, "perf.root")
-                                     : ramview(file.c_str(), region.c_str(), true, false, "perf.root");
+      for ([[maybe_unused]] auto _ : state) {
+         reads_in_this_run = rntuple ? ramntupleview(file.c_str(), region.c_str(), /*cache=*/true, /*perfstats=*/false,
+                                                     /*perfstatsfilename=*/"perf.root")
+                                     : ramview(file.c_str(), region.c_str(), /*cache=*/true, /*perfstats=*/false,
+                                               /*perfstatsfilename=*/"perf.root");
          total_reads_processed += reads_in_this_run;
       }
    }
@@ -75,16 +78,16 @@ int main(int argc, char **argv)
    const std::string rntuple_root = cfg.EnsureRNTupleRoot();
 
    for (int idx : SelectedRegions(cfg)) {
-      const std::string region = kRegions[idx % kRegions.size()];
+      const std::string &region = kRegions[idx % kRegions.size()];
 
       benchmark::RegisterBenchmark("RegionQuery/TTree/r" + std::to_string(idx), [ttree_root, region,
                                                                                  idx](benchmark::State &state) {
-         RunQuery(state, ttree_root, region, idx, false);
+         RunQuery(state, ttree_root, region, idx, /*rntuple=*/false);
       })->Unit(benchmark::kSecond);
 
       benchmark::RegisterBenchmark("RegionQuery/RNTuple/r" + std::to_string(idx), [rntuple_root, region,
                                                                                    idx](benchmark::State &state) {
-         RunQuery(state, rntuple_root, region, idx, true);
+         RunQuery(state, rntuple_root, region, idx, /*rntuple=*/true);
       })->Unit(benchmark::kSecond);
    }
 

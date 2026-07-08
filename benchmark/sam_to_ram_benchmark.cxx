@@ -1,9 +1,9 @@
-#include <benchmark/benchmark.h>
 #include "benchmark_config.h"
 #include "benchmark_utils.h"
 #include "generate_sam_benchmark.h"
 #include "ramcore/SamToNTuple.h"
 #include "ramcore/SamToTTree.h"
+#include <benchmark/benchmark.h>
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
@@ -16,17 +16,21 @@ CompareConversion(benchmark::State &state, const std::string &sam_file, int comp
    const std::string ttree_file = "cmp_ttree.root";
    const std::string rntuple_file = "cmp_rntuple.root";
 
-   for (auto _ : state) {
+   for ([[maybe_unused]] auto _ : state) {
       {
          benchutil::ScopedStdoutSuppressor quiet;
-         samtoram(sam_file.c_str(), ttree_file.c_str(), true, true, true, 1, quality);
-         samtoramntuple(sam_file.c_str(), rntuple_file.c_str(), true, true, true, compression, quality);
+         samtoram(sam_file.c_str(), ttree_file.c_str(), /*index=*/true, /*split=*/true, /*cache=*/true,
+                  /*compression_algorithm=*/1, quality);
+         samtoramntuple(sam_file.c_str(), rntuple_file.c_str(), /*index=*/true, /*split=*/true, /*cache=*/true,
+                        compression, quality);
       }
 
       if (std::filesystem::exists(ttree_file))
-         state.counters["ttree_size_mb"] = std::filesystem::file_size(ttree_file) / (1024.0 * 1024.0);
+         state.counters["ttree_size_mb"] =
+            static_cast<double>(std::filesystem::file_size(ttree_file)) / (1024.0 * 1024.0);
       if (std::filesystem::exists(rntuple_file))
-         state.counters["rntuple_size_mb"] = std::filesystem::file_size(rntuple_file) / (1024.0 * 1024.0);
+         state.counters["rntuple_size_mb"] =
+            static_cast<double>(std::filesystem::file_size(rntuple_file)) / (1024.0 * 1024.0);
       if (state.counters["ttree_size_mb"] > 0 && state.counters["rntuple_size_mb"] > 0)
          state.counters["compression_ratio"] = state.counters["ttree_size_mb"] / state.counters["rntuple_size_mb"];
 
@@ -51,9 +55,9 @@ int main(int argc, char **argv)
 {
    benchutil::BenchmarkConfig cfg = benchutil::BenchmarkConfig::FromArgs(&argc, argv);
 
-   std::cout << "SAM to RAM Conversion Benchmark" << std::endl;
-   std::cout << "Comparing TTree vs RNTuple performance and file sizes" << std::endl;
-   std::cout << std::endl;
+   std::cout << "SAM to RAM Conversion Benchmark\n";
+   std::cout << "Comparing TTree vs RNTuple performance and file sizes\n";
+   std::cout << '\n';
 
    const int compression = cfg.compression;
    const unsigned int quality = cfg.quality;

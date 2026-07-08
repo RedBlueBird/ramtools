@@ -1,9 +1,9 @@
-#include <benchmark/benchmark.h>
 #include "benchmark_config.h"
 #include "benchmark_utils.h"
 #include "generate_sam_benchmark.h"
 #include "ramcore/SamToNTuple.h"
 #include "ramcore/SamToTTree.h"
+#include <benchmark/benchmark.h>
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
@@ -13,13 +13,14 @@
 static void TimeTTreeConversion(benchmark::State &state, const std::string &sam_file)
 {
    const std::string out = "conv_ttree_out.root";
-   for (auto _ : state) {
+   for ([[maybe_unused]] auto _ : state) {
       {
          benchutil::ScopedStdoutSuppressor quiet;
-         samtoram(sam_file.c_str(), out.c_str(), true, true, true, 1, 0);
+         samtoram(sam_file.c_str(), out.c_str(), /*index=*/true, /*split=*/true, /*cache=*/true,
+                  /*compression_algorithm=*/1, /*quality_policy=*/0);
       }
       if (std::filesystem::exists(out))
-         state.counters["file_size_mb"] = std::filesystem::file_size(out) / (1024.0 * 1024.0);
+         state.counters["file_size_mb"] = static_cast<double>(std::filesystem::file_size(out)) / (1024.0 * 1024.0);
       std::remove(out.c_str());
    }
 }
@@ -29,13 +30,14 @@ static void
 TimeRNTupleConversion(benchmark::State &state, const std::string &sam_file, int compression, unsigned int quality)
 {
    const std::string out = "conv_rntuple_out.root";
-   for (auto _ : state) {
+   for ([[maybe_unused]] auto _ : state) {
       {
          benchutil::ScopedStdoutSuppressor quiet;
-         samtoramntuple(sam_file.c_str(), out.c_str(), true, true, true, compression, quality);
+         samtoramntuple(sam_file.c_str(), out.c_str(), /*index=*/true, /*split=*/true, /*cache=*/true, compression,
+                        quality);
       }
       if (std::filesystem::exists(out))
-         state.counters["file_size_mb"] = std::filesystem::file_size(out) / (1024.0 * 1024.0);
+         state.counters["file_size_mb"] = static_cast<double>(std::filesystem::file_size(out)) / (1024.0 * 1024.0);
       std::remove(out.c_str());
    }
 }
@@ -65,10 +67,10 @@ int main(int argc, char **argv)
 {
    benchutil::BenchmarkConfig cfg = benchutil::BenchmarkConfig::FromArgs(&argc, argv);
 
-   std::cout << "Individual Conversion Time Benchmark" << std::endl;
-   std::cout << "====================================" << std::endl;
-   std::cout << "Measuring TTree and RNTuple conversion times separately" << std::endl;
-   std::cout << std::endl;
+   std::cout << "Individual Conversion Time Benchmark\n";
+   std::cout << "====================================\n";
+   std::cout << "Measuring TTree and RNTuple conversion times separately\n";
+   std::cout << '\n';
 
    const int compression = cfg.compression;
    const unsigned int quality = cfg.quality;

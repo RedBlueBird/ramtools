@@ -5,10 +5,10 @@
 // cigar, tags, ...). This benchmark contrasts the two on the same RNTuple so the gap is
 // explicit -- the genomics analogue of the HEP "read one branch" pattern.
 
-#include <benchmark/benchmark.h>
 #include "benchmark_config.h"
 #include "rntuple/RAMNTupleRecord.h"
-#include <Rtypes.h>
+#include <RtypesCore.h>
+#include <benchmark/benchmark.h>
 #include <cstdint>
 #include <string>
 
@@ -20,9 +20,9 @@ static void BM_ColumnarFlagOnly(benchmark::State &state, const std::string &file
       state.SkipWithError("could not open RNTuple file");
       return;
    }
-   const Long64_t n = reader->GetNEntries();
+   const auto n = static_cast<Long64_t>(reader->GetNEntries());
 
-   for (auto _ : state) {
+   for ([[maybe_unused]] auto _ : state) {
       auto flagView = reader->GetView<uint16_t>("record.flag");
       uint64_t sum = 0;
       for (Long64_t i = 0; i < n; ++i)
@@ -42,9 +42,9 @@ static void BM_ColumnarMapqOnly(benchmark::State &state, const std::string &file
       state.SkipWithError("could not open RNTuple file");
       return;
    }
-   const Long64_t n = reader->GetNEntries();
+   const auto n = static_cast<Long64_t>(reader->GetNEntries());
 
-   for (auto _ : state) {
+   for ([[maybe_unused]] auto _ : state) {
       auto mapqView = reader->GetView<uint8_t>("record.mapq");
       uint64_t sum = 0;
       for (Long64_t i = 0; i < n; ++i)
@@ -64,9 +64,9 @@ static void BM_FullRecordRead(benchmark::State &state, const std::string &file)
       state.SkipWithError("could not open RNTuple file");
       return;
    }
-   const Long64_t n = reader->GetNEntries();
+   const auto n = static_cast<Long64_t>(reader->GetNEntries());
 
-   for (auto _ : state) {
+   for ([[maybe_unused]] auto _ : state) {
       auto recordView = reader->GetView<RAMNTupleRecord>("record");
       uint64_t sum = 0;
       for (Long64_t i = 0; i < n; ++i)
