@@ -9,7 +9,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
 // Empty => generate synthetic data per benchmark arg; non-empty => split this real SAM.
 static std::string g_realSam; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
