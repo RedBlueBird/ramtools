@@ -4,17 +4,21 @@
 #include <Rtypes.h>
 #include <TFile.h>
 #include <TTree.h>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
+#include <limits>
 #include <string>
 #include "../benchmark/generate_sam_benchmark.h"
 #include "../tools/ramview.cxx"
 #include "ramcore/RAMNTupleView.h"
+#include "ramcore/SamParser.h"
 #include "ramcore/SamToNTuple.h"
 #include "rntuple/RAMNTupleRecord.h"
 #include "ramcore/SamToTTree.h"
@@ -22,21 +26,59 @@ namespace {
 
 class ramcoreTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-       GenerateSAMFile("samexample.sam", 100);
-       std::remove("test_ttree.root");
-       std::remove("test_rntuple.root");
-    }
+   static constexpr const char *kParserTestFile = "test_sam_parser_validation.sam";
 
-    void TearDown() override {
-        std::remove("test_ttree.root");
-        std::remove("test_rntuple.root");
-        std::remove("samexample.sam");
-        RAMNTupleRecord::GetIndex()->Clear();
-    }
+   // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+   void SetUp() override
+   {
+      GenerateSAMFile("samexample.sam", 100);
+      std::remove("test_ttree.root");
+      std::remove("test_rntuple.root");
+   }
+
+   // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+   void TearDown() override
+   {
+      std::remove("test_ttree.root");
+      std::remove("test_rntuple.root");
+      std::remove("samexample.sam");
+      std::remove(kParserTestFile);
+      RAMNTupleRecord::GetIndex()->Clear();
+   }
+
+   template <typename OnRecord>
+   static size_t ParseSamRecords(std::initializer_list<const char *> records, OnRecord on_record)
+   {
+      {
+         std::ofstream sam(kParserTestFile);
+         sam << "@HD\tVN:1.6\n";
+         sam << "@SQ\tSN:chr1\tLN:1000\n";
+         for (const auto &record : records) {
+            sam << record << '\n';
+         }
+      }
+
+      size_t count = 0;
+      ramcore::SamParser parser;
+      const bool parsed = parser.ParseFile(
+         kParserTestFile, [](const std::string &, const std::string &) {},
+         [&](const ramcore::SamRecord &record, size_t) {
+            ++count;
+            on_record(record);
+         });
+
+      EXPECT_TRUE(parsed);
+      return count;
+   }
+
+   static size_t ParseSamRecords(std::initializer_list<const char *> records)
+   {
+      return ParseSamRecords(records, [](const ramcore::SamRecord &) {});
+   }
 };
 
-TEST_F(ramcoreTest, ConversionProducesEqualEntries) {
+TEST_F(ramcoreTest, ConversionProducesEqualEntries)
+{
    const char *samFile = "samexample.sam";
    const char *ttreeFile = "test_ttree.root";
    const char *rntupleFile = "test_rntuple.root";
@@ -265,6 +307,8 @@ TEST_F(ramcoreTest, RecordGetters)
    EXPECT_EQ(record.GetCIGAROP(/*idx=*/9), 0);
 
    // all 15 IUPAC bases
+   record.SetSEQ("ATT");
+   EXPECT_EQ(record.GetSEQ(), "ATT");
    record.SetSEQ("=ACMGRSVTWYHKDBN");
    EXPECT_EQ(record.GetSEQ(), "=ACMGRSVTWYHKDBN");
    record.SetSEQ("");
@@ -280,19 +324,83 @@ TEST_F(ramcoreTest, RecordGetters)
    dropRecord.SetQUAL("IIIII");
    EXPECT_EQ(dropRecord.GetQUAL(), "*");
 
-   // kIlluminaBinning, ASCII bins 0, 1, 6, 15, 22, 27, 33, 37, 40
+   // kIlluminaBinning maps a Phred VALUE to one of 0,1,6,15,22,27,33,37,40.
+   // SAM writes quality as Phred+33 ASCII, so the encoder must subtract 33
+   // before the lookup. These expectations are stated in Phred space and
+   // converted, so they cannot silently drift back to indexing by ASCII.
    RAMNTupleRecord binRecord;
    binRecord.SetBit(RAMNTupleRecord::kIlluminaBinning);
-   binRecord.SetQUAL("\""); // ASCII 34 → bin 33 → 'B'
-   EXPECT_EQ(binRecord.GetQUAL(), "B");
-   binRecord.SetQUAL("$"); // ASCII 36 → bin 37 → 'F'
-   EXPECT_EQ(binRecord.GetQUAL(), "F");
-   binRecord.SetQUAL("'"); // ASCII 39 → bin 37 → 'F'
-   EXPECT_EQ(binRecord.GetQUAL(), "F");
-   binRecord.SetQUAL("("); // ASCII 40 → bin 40 → 'I'
-   EXPECT_EQ(binRecord.GetQUAL(), "I");
-   binRecord.SetQUAL("2"); // ASCII 50 → bin 40 → 'I'
-   EXPECT_EQ(binRecord.GetQUAL(), "I");
+
+   // Two characters, not one: Phred 9 encodes to ASCII 42, which is '*'. A
+   // one-base read whose quality is "*" is ambiguous in SAM itself (sentinel
+   // vs. Q9), so single-character quality strings are a bad test vector.
+   auto phred = [](int q) { return std::string(2, static_cast<char>(q + 33)); };
+   auto roundTrip = [&](int q) {
+      binRecord.SetQUAL(phred(q));
+      const std::string out = binRecord.GetQUAL();
+      EXPECT_EQ(out.size(), 2U);
+      return static_cast<int>(static_cast<unsigned char>(out[0])) - 33;
+   };
+
+   struct Bin {
+      int in;
+      int want;
+   };
+   const std::array<Bin, 16> kBins = {{
+      {0, 0},
+      {1, 1},
+      {2, 6},
+      {9, 6},
+      {10, 15},
+      {19, 15},
+      {20, 22},
+      {24, 22},
+      {25, 27},
+      {29, 27},
+      {30, 33},
+      {34, 33},
+      {35, 37},
+      {39, 37},
+      {40, 40},
+      {93, 40},
+   }};
+   for (const auto &c : kBins)
+      EXPECT_EQ(roundTrip(c.in), c.want) << "Q" << c.in << " should bin to Q" << c.want;
+
+   // NOTE: binning is NOT monotonically downward -- Illumina maps each bin to
+   // a representative value near its middle, so Q2 legitimately becomes Q6.
+   // "never raises a quality" is therefore the wrong invariant. What the
+   // ASCII-indexing bug actually violated is captured below.
+
+   // Q0 means "no usable base". It must survive as Q0; the old code rewrote it
+   // as Q33 (0.05% error), fabricating confidence a variant caller would trust.
+   EXPECT_EQ(roundTrip(0), 0) << "a zero-quality base must not be upgraded";
+
+   int previous = -1;
+   for (int q = 0; q <= 93; ++q) {
+      const int got = roundTrip(q);
+      EXPECT_GE(got, previous) << "binning must be monotonic; broke at Q" << q;
+      previous = got;
+      EXPECT_TRUE(got == 0 || got == 1 || got == 6 || got == 15 || got == 22 || got == 27 || got == 33 || got == 37 ||
+                  got == 40)
+         << "Q" << q << " produced Q" << got << ", not a legal Illumina bin";
+   }
+
+   // "*" means "no quality available"; it is a sentinel, not a Phred string,
+   // and must survive rather than be run through the table. Feeding it through
+   // mapped '*' (ASCII 42) to bin 40, producing a one-character QUAL against a
+   // full-length SEQ -- a malformed record, not merely a wrong one.
+   binRecord.SetQUAL("*");
+   EXPECT_EQ(binRecord.GetQUAL(), "*");
+
+   // The lossless path must pass the sentinel through untouched too.
+   RAMNTupleRecord losslessRecord;
+   losslessRecord.SetQUAL("*");
+   EXPECT_EQ(losslessRecord.GetQUAL(), "*");
+
+   // Length must be preserved for real quality strings.
+   binRecord.SetQUAL("IIIIIIIIII");
+   EXPECT_EQ(binRecord.GetQUAL().size(), 10U);
 }
 
 } // namespace
@@ -379,6 +487,61 @@ TEST_F(ramcoreTest, SmartIndexRespectsPositionInterval)
    EXPECT_EQ(far, 1) << "Distant read should be indexed via position interval";
 
    std::remove(customSam);
+   std::remove(rntupleFile);
+}
+
+// NOLINTNEXTLINE(misc-use-internal-linkage)
+TEST_F(ramcoreTest, SamParserRejectsMalformedIntegerFields)
+{
+   EXPECT_EQ(ParseSamRecords({"bad_flag\tabc\tchr1\t100\t60\t10M\t*\t0\t0\tACGT\tIIII",
+                              "bad_flag_space\t 1\tchr1\t100\t60\t10M\t*\t0\t0\tACGT\tIIII",
+                              "bad_pos\t0\tchr1\t12x\t60\t10M\t*\t0\t0\tACGT\tIIII",
+                              "bad_mapq\t0\tchr1\t100\t256\t10M\t*\t0\t0\tACGT\tIIII",
+                              "bad_pnext\t0\tchr1\t100\t60\t10M\t*\t-1\t0\tACGT\tIIII",
+                              "bad_tlen_min\t0\tchr1\t100\t60\t10M\t*\t0\t-2147483648\tACGT\tIIII",
+                              "bad_tlen\t0\tchr1\t100\t60\t10M\t*\t0\t999999999999999999999\tACGT\tIIII",
+                              "good\t0\tchr1\t200\t60\t10M\t*\t0\t0\tACGT\tIIII"}),
+             1U);
+}
+
+// NOLINTNEXTLINE(misc-use-internal-linkage)
+TEST_F(ramcoreTest, SamParserParsesValidIntegerBoundaries)
+{
+   ramcore::SamRecord parsed;
+
+   ASSERT_EQ(ParseSamRecords({"boundary\t65535\tchr1\t0\t255\t10M\t*\t0\t-2147483647\tACGT\tIIII"},
+                             [&](const ramcore::SamRecord &record) { parsed = record; }),
+             1U);
+   EXPECT_EQ(parsed.flag, 65535);
+   EXPECT_EQ(parsed.pos, 0);
+   EXPECT_EQ(parsed.mapq, 255);
+   EXPECT_EQ(parsed.pnext, 0);
+   EXPECT_EQ(parsed.tlen, std::numeric_limits<int>::min() + 1);
+}
+
+// NOLINTNEXTLINE(misc-use-internal-linkage)
+TEST_F(ramcoreTest, InvalidChromosomeDoesNotPolluteFRefVec)
+{
+   const char *samFile = "samexample.sam";
+   const char *rntupleFile = "test_rntuple.root";
+
+   RAMNTupleConverter::ConvertSAMToRAMNTuple(samFile, rntupleFile);
+
+   size_t refsBefore = 0;
+   refsBefore = RAMNTupleRecord::GetRnameRefs()->Size();
+
+   testing::internal::CaptureStdout();
+   testing::internal::CaptureStderr();
+   RAMNTupleConverter::ViewRegion(rntupleFile, "chrINVALID:100-200");
+   testing::internal::GetCapturedStdout();
+   testing::internal::GetCapturedStderr();
+
+   size_t refsAfter = 0;
+   refsAfter = RAMNTupleRecord::GetRnameRefs()->Size();
+
+   EXPECT_EQ(refsBefore, refsAfter)
+      << "Invalid chromosome 'chrINVALID' was inserted into fRefVec (regression of issue #23)";
+
    std::remove(rntupleFile);
 }
 

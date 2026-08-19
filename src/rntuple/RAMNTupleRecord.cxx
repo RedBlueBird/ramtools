@@ -69,6 +69,18 @@ int RAMNTupleRefs::GetRefId(const std::string &rname)
    return fLastId;
 }
 
+int RAMNTupleRefs::FindRefId(const std::string &rname) const
+{
+   if (rname == "*")
+      return -1;
+   if (rname == fLastName)
+      return fLastId;
+   auto it = std::find(fRefVec.begin(), fRefVec.end(), rname);
+   if (it != fRefVec.end())
+      return static_cast<int>(std::distance(fRefVec.begin(), it));
+   return -1;
+}
+
 const std::string &RAMNTupleRefs::GetRefName(int rid) const
 {
    static const std::string star = "*";
@@ -439,7 +451,8 @@ std::string DecodeSequence(const std::string &encoded_seq, size_t length)
       seq[i * 2 + 1] = kCodeToSeq[byte & 0xf];
    }
    if (length % 2) {
-      seq[length - 1] = kCodeToSeq[encoded_seq[length / 2] >> 4];
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      seq[length - 1] = kCodeToSeq[static_cast<uint8_t>(encoded_seq[length / 2]) >> 4];
    }
 
    return seq;
@@ -447,20 +460,32 @@ std::string DecodeSequence(const std::string &encoded_seq, size_t length)
 
 std::string EncodeQuality(const std::string &qual, uint32_t compression_flags)
 {
-   std::string encoded;
-
    if (compression_flags & RAMNTupleRecord::kDrop) {
-      encoded = "*";
-   } else if (compression_flags & RAMNTupleRecord::kIlluminaBinning) {
-      encoded.resize(qual.size());
-      for (size_t i = 0; i < qual.size(); i++) {
-         encoded[i] = kIlluminaBinning[static_cast<uint8_t>(qual[i])];
-      }
-   } else {
-      encoded = qual;
+      return "*";
    }
 
-   return encoded;
+   if (compression_flags & RAMNTupleRecord::kIlluminaBinning) {
+      // "*" means "quality not available". It is a sentinel, not a Phred
+      // string, so it must not be fed through the binning table
+      if (qual == "*")
+         return {};
+
+      std::string encoded(qual.size(), '\0');
+      for (size_t i = 0; i < qual.size(); i++) {
+         // SAM stores quality as Phred+33 ASCII, but kIlluminaBinning is
+         // indexed by the Phred VALUE. Without the -33 every lookup lands 33
+         // slots too far right
+         // Clamp to 0..93: 93 is SAM's maximum Phred, and it also keeps the
+         // index inside the initialised part of the table (entries 110..255
+         // are zero-filled, so an out-of-range value would silently decode as
+         // Q0 -- the opposite error, but still an error).
+         const int phred = std::clamp(static_cast<int>(static_cast<unsigned char>(qual[i])) - 33, 0, 93);
+         encoded[i] = static_cast<char>(kIlluminaBinning[phred]);
+      }
+      return encoded;
+   }
+
+   return qual;
 }
 
 std::string DecodeQuality(const std::string &encoded_qual, uint32_t compression_flags)
@@ -469,15 +494,20 @@ std::string DecodeQuality(const std::string &encoded_qual, uint32_t compression_
       return "*";
    }
 
-   std::string qual = encoded_qual;
-
    if (compression_flags & RAMNTupleRecord::kIlluminaBinning) {
+      // Empty is the "quality not available" sentinel written by
+      // EncodeQuality; restore the "*" it stood for.
+      if (encoded_qual.empty())
+         return "*";
+
+      std::string qual = encoded_qual;
       for (auto &q : qual) {
-         q += 33;
+         q = static_cast<char>(static_cast<unsigned char>(q) + 33);
       }
+      return qual;
    }
 
-   return qual;
+   return encoded_qual;
 }
 
 std::vector<uint32_t> ParseCIGAR(const std::string &cigar_str)
@@ -505,6 +535,11 @@ std::vector<uint32_t> ParseCIGAR(const std::string &cigar_str)
 
 std::string FormatCIGAR(const std::vector<uint32_t> &cigar_ops)
 {
+   // Without this an unmapped read comes back with an empty CIGAR column
+   // producing a malformed SAM record
+   if (cigar_ops.empty())
+      return "*";
+
    std::ostringstream oss;
 
    for (uint32_t op : cigar_ops) {
@@ -710,7 +745,7 @@ void RAMNTupleConverter::ViewRegion(const std::string &ram_file, const std::stri
    }
 
    auto refs = RAMNTupleRecord::GetRnameRefs();
-   int32_t ref_id = refs ? refs->GetRefId(ref_name) : -1;
+   int32_t ref_id = refs ? refs->FindRefId(ref_name) : -1;
 
    if (ref_id < 0) {
       ::Error("ViewRegion", "Unknown reference sequence: %s", ref_name.c_str());
@@ -746,4 +781,3 @@ void RAMNTupleConverter::ViewRegion(const std::string &ram_file, const std::stri
       std::cout << "Found " << count << " reads in region " << region << std::endl;
    }
 }
-
