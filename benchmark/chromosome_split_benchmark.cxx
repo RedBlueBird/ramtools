@@ -1,36 +1,46 @@
+// Chromosome split: RNTuple's parallel per-chromosome writer vs the same operation on BAM.
+//
+// Both sides start from the same SAM and finish with one file per populated chromosome,
+// so the comparison is end-to-end and symmetric:
+//
+//   RNTuple  samtoramntuple_split_by_chromosome(): parse SAM -> group by chromosome ->
+//            sort each chromosome -> parallel write, one .root per chromosome.
+//   BAM      BamConvert(): parse SAM -> sort -> write BAM -> build .bai; then BamSplit():
+//            indexed extraction into one .bam per chromosome across `threads` workers.
+//
+// The BAM route writes an intermediate sorted+indexed BAM that the RNTuple route does not
+// need. That is a real cost of the format's workflow rather than an artefact of the
+// benchmark -- it is what a samtools user actually pays -- so it is inside the timed
+// region. Only the per-chromosome outputs are counted in size_MB; the intermediate is
+// excluded and deleted.
+//
+// This replaces an earlier version that shelled out to `samtools view/sort/index` via
+// system(). Running in-process takes fork/exec out of every iteration, puts the sort on
+// the same footing as the RNTuple side's internal sort, and drops the suite's dependency
+// on a samtools binary being installed.
+
+#include "bam_ops.h"
 #include "benchmark_config.h"
 #include "benchmark_utils.h"
 #include "generate_sam_benchmark.h"
 #include "ramcore/SamToNTuple.h"
 #include <benchmark/benchmark.h>
 #include <cstdio>
-#include <cstdlib>
-#include <fstream>
+#include <iostream>
 #include <string>
-#include <thread>
-#include <vector>
+
+namespace {
+
 // Empty => generate synthetic data per benchmark arg; non-empty => split this real SAM.
-static std::string g_realSam; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+std::string g_realSam;      // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+int g_compression = 505;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+unsigned int g_quality = 0; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-static std::vector<std::string> GetChromosomes(const std::string &sam_file)
-{
-   std::vector<std::string> chroms;
-   std::ifstream f(sam_file);
-   std::string line;
-
-   while (std::getline(f, line) && line[0] == '@') {
-      if (line.find("@SQ\tSN:") == 0) {
-         size_t start = 7;
-         size_t end = line.find('\t', start);
-         chroms.push_back(line.substr(start, end - start));
-      }
-   }
-   return chroms;
-}
+constexpr double kBytesPerMB = 1024.0 * 1024.0;
 
 // Resolve the SAM to operate on: the real dataset, or a freshly generated synthetic file.
 // Sets `generated` so the caller knows whether to delete it afterwards.
-static std::string PrepareSam(int num_reads, const std::string &gen_name, bool &generated)
+std::string PrepareSam(int num_reads, const std::string &gen_name, bool &generated)
 {
    if (!g_realSam.empty()) {
       generated = false;
@@ -41,157 +51,27 @@ static std::string PrepareSam(int num_reads, const std::string &gen_name, bool &
    return gen_name;
 }
 
-static void BM_SamtoolsSplit(benchmark::State &state)
+void BM_RNTupleSplit(benchmark::State &state)
 {
-   int num_reads = static_cast<int>(state.range(0));
+   const int num_reads = static_cast<int>(state.range(0));
+   const int num_threads = static_cast<int>(state.range(1));
    bool generated = false;
-   std::string sam_file = PrepareSam(num_reads, "bench_st_" + std::to_string(num_reads) + ".sam", generated);
-   auto chromosomes = GetChromosomes(sam_file);
-
-   for ([[maybe_unused]] auto _ : state) {
-      std::string bam_file = "bench_st_tmp.bam";
-      std::string sorted_bam = "bench_st_sorted.bam";
-
-      std::string cmd = "samtools view -bS ";
-      cmd += sam_file;
-      cmd += " -o ";
-      cmd += bam_file;
-      cmd += " 2>/dev/null";
-      system(cmd.c_str());
-
-      cmd = "samtools sort ";
-      cmd += bam_file;
-      cmd += " -o ";
-      cmd += sorted_bam;
-      cmd += " 2>/dev/null";
-      system(cmd.c_str());
-
-      cmd = "samtools index ";
-      cmd += sorted_bam;
-      cmd += " 2>/dev/null";
-      system(cmd.c_str());
-
-      for (const auto &chr : chromosomes) {
-         cmd = "samtools view -b ";
-         cmd += sorted_bam;
-         cmd += " ";
-         cmd += chr;
-         cmd += " > bench_st_";
-         cmd += chr;
-         cmd += ".bam 2>/dev/null";
-         system(cmd.c_str());
-      }
-
-      state.counters["size_MB"] = static_cast<double>(benchutil::GetTotalFileSize("bench_st_chr")) / (1024.0 * 1024.0);
-
-      benchutil::CleanupFiles("bench_st_chr");
-      std::remove(bam_file.c_str());
-      std::remove(sorted_bam.c_str());
-      std::remove((sorted_bam + ".bai").c_str());
-   }
-
-   if (generated)
-      std::remove(sam_file.c_str());
-   if (g_realSam.empty())
-      state.counters["reads/s"] = benchmark::Counter(num_reads, benchmark::Counter::kIsRate);
-}
-
-static void BM_SamtoolsSplitThreaded(benchmark::State &state)
-{
-   int num_reads = static_cast<int>(state.range(0));
-   int num_threads = static_cast<int>(state.range(1));
-   bool generated = false;
-   std::string sam_file = PrepareSam(num_reads, "bench_st_mt_" + std::to_string(num_reads) + ".sam", generated);
-   auto chromosomes = GetChromosomes(sam_file);
-
-   for ([[maybe_unused]] auto _ : state) {
-      std::string bam_file = "bench_st_mt_tmp.bam";
-      std::string sorted_bam = "bench_st_mt_sorted.bam";
-
-      std::string cmd = "samtools view -@ ";
-      cmd += std::to_string(num_threads);
-      cmd += " -bS ";
-      cmd += sam_file;
-      cmd += " -o ";
-      cmd += bam_file;
-      cmd += " 2>/dev/null";
-      system(cmd.c_str());
-
-      cmd = "samtools sort -@ ";
-      cmd += std::to_string(num_threads);
-      cmd += " -m 1G ";
-      cmd += bam_file;
-      cmd += " -o ";
-      cmd += sorted_bam;
-      cmd += " 2>/dev/null";
-      system(cmd.c_str());
-
-      cmd = "samtools index -@ ";
-      cmd += std::to_string(num_threads);
-      cmd += " ";
-      cmd += sorted_bam;
-      cmd += " 2>/dev/null";
-      system(cmd.c_str());
-
-      std::vector<std::thread> threads;
-      for (const auto &chr : chromosomes) {
-         threads.emplace_back([&sorted_bam, &chr]() {
-            std::string thread_cmd = "samtools view -@ 2 -b ";
-            thread_cmd += sorted_bam;
-            thread_cmd += " ";
-            thread_cmd += chr;
-            thread_cmd += " > bench_st_mt_";
-            thread_cmd += chr;
-            thread_cmd += ".bam 2>/dev/null";
-            system(thread_cmd.c_str());
-         });
-
-         if (threads.size() >= static_cast<size_t>(num_threads)) {
-            for (auto &t : threads) {
-               t.join();
-            }
-            threads.clear();
-         }
-      }
-
-      for (auto &t : threads) {
-         t.join();
-      }
-
-      state.counters["size_MB"] =
-         static_cast<double>(benchutil::GetTotalFileSize("bench_st_mt_chr")) / (1024.0 * 1024.0);
-      state.counters["threads"] = num_threads;
-
-      benchutil::CleanupFiles("bench_st_mt_chr");
-      std::remove(bam_file.c_str());
-      std::remove(sorted_bam.c_str());
-      std::remove((sorted_bam + ".bai").c_str());
-   }
-
-   if (generated)
-      std::remove(sam_file.c_str());
-   if (g_realSam.empty())
-      state.counters["reads/s"] = benchmark::Counter(num_reads, benchmark::Counter::kIsRate);
-}
-
-static void BM_ChromosomeSplitThreads(benchmark::State &state)
-{
-   int num_reads = static_cast<int>(state.range(0));
-   int num_threads = static_cast<int>(state.range(1));
-   bool generated = false;
-   std::string sam_file = PrepareSam(num_reads, "bench_split_par_" + std::to_string(num_reads) + ".sam", generated);
+   const std::string sam_file =
+      PrepareSam(num_reads, "split_rntuple_in_" + std::to_string(num_reads) + ".sam", generated);
+   const std::string prefix = "split_rntuple_out";
 
    for ([[maybe_unused]] auto _ : state) {
       {
          benchutil::ScopedStdoutSuppressor quiet(/*suppress_stderr=*/true);
-         samtoramntuple_split_by_chromosome(sam_file.c_str(), /*output_prefix=*/"bench_split_par_out",
-                                            /*compression_algorithm=*/505, /*quality_policy=*/1, num_threads);
+         // NOTE: the compression argument is currently ignored by the implementation,
+         // which hardcodes ZSTD-1 for the split path; it is passed for correctness of the
+         // call site, not because it takes effect.
+         samtoramntuple_split_by_chromosome(sam_file.c_str(), prefix.c_str(), g_compression, g_quality, num_threads);
       }
 
-      state.counters["size_MB"] =
-         static_cast<double>(benchutil::GetTotalFileSize("bench_split_par_out_")) / (1024.0 * 1024.0);
+      state.counters["size_MB"] = static_cast<double>(benchutil::TotalSizeByPrefix(prefix + "_")) / kBytesPerMB;
       state.counters["threads"] = num_threads;
-      benchutil::CleanupFiles("bench_split_par_out_");
+      benchutil::CleanupByPrefix(prefix + "_");
    }
 
    if (generated)
@@ -199,30 +79,62 @@ static void BM_ChromosomeSplitThreads(benchmark::State &state)
    if (g_realSam.empty())
       state.counters["reads/s"] = benchmark::Counter(num_reads, benchmark::Counter::kIsRate);
 }
+
+void BM_BamSplit(benchmark::State &state)
+{
+   const int num_reads = static_cast<int>(state.range(0));
+   const int num_threads = static_cast<int>(state.range(1));
+   bool generated = false;
+   const std::string sam_file = PrepareSam(num_reads, "split_bam_in_" + std::to_string(num_reads) + ".sam", generated);
+   const std::string intermediate = "split_bam_tmp.bam";
+   const std::string prefix = "split_bam_out";
+
+   for ([[maybe_unused]] auto _ : state) {
+      const auto converted = benchutil::BamConvert(sam_file, intermediate, num_threads);
+      if (!converted.ok || !converted.indexed) {
+         state.SkipWithError("could not build a sorted, indexed BAM to split");
+         break;
+      }
+      const std::size_t bytes = benchutil::BamSplit(intermediate, prefix, num_threads);
+
+      state.counters["size_MB"] = static_cast<double>(bytes) / kBytesPerMB;
+      state.counters["threads"] = num_threads;
+      benchutil::CleanupByPrefix(prefix + "_");
+      std::remove(intermediate.c_str());
+      std::remove((intermediate + ".bai").c_str());
+   }
+
+   if (generated)
+      std::remove(sam_file.c_str());
+   if (g_realSam.empty())
+      state.counters["reads/s"] = benchmark::Counter(num_reads, benchmark::Counter::kIsRate);
+}
+
+} // namespace
 
 int main(int argc, char **argv)
 {
    benchutil::BenchmarkConfig cfg = benchutil::BenchmarkConfig::FromArgs(&argc, argv);
    g_realSam = cfg.sam;
+   g_compression = cfg.compression;
+   g_quality = cfg.quality;
+
+   if (g_quality != 0)
+      std::cout << "NOTE: --quality=" << g_quality << " is lossy; BAM has no lossy mode, so the BAM rows\n"
+                << "      are not a like-for-like comparison at this setting.\n\n";
 
    if (!g_realSam.empty()) {
       // Real dataset: vary only the thread count (read count is fixed by the file).
-      benchmark::RegisterBenchmark("BM_SamtoolsSplit/real", BM_SamtoolsSplit)->Arg(0)->Unit(benchmark::kMillisecond);
-      benchmark::RegisterBenchmark("BM_SamtoolsSplitThreaded/real", BM_SamtoolsSplitThreaded)
+      benchmark::RegisterBenchmark("ChromosomeSplit/RNTuple/real", BM_RNTupleSplit)
          ->Args({0, 2})
          ->Args({0, 4})
          ->Unit(benchmark::kMillisecond);
-      benchmark::RegisterBenchmark("BM_ChromosomeSplitThreads/real", BM_ChromosomeSplitThreads)
+      benchmark::RegisterBenchmark("ChromosomeSplit/BAM/real", BM_BamSplit)
          ->Args({0, 2})
          ->Args({0, 4})
          ->Unit(benchmark::kMillisecond);
    } else {
-      benchmark::RegisterBenchmark("BM_SamtoolsSplit", BM_SamtoolsSplit)
-         ->Arg(100000)
-         ->Arg(500000)
-         ->Arg(1000000)
-         ->Unit(benchmark::kMillisecond);
-      benchmark::RegisterBenchmark("BM_SamtoolsSplitThreaded", BM_SamtoolsSplitThreaded)
+      benchmark::RegisterBenchmark("ChromosomeSplit/RNTuple", BM_RNTupleSplit)
          ->Args({100000, 2})
          ->Args({100000, 4})
          ->Args({500000, 2})
@@ -230,7 +142,7 @@ int main(int argc, char **argv)
          ->Args({1000000, 2})
          ->Args({1000000, 4})
          ->Unit(benchmark::kMillisecond);
-      benchmark::RegisterBenchmark("BM_ChromosomeSplitThreads", BM_ChromosomeSplitThreads)
+      benchmark::RegisterBenchmark("ChromosomeSplit/BAM", BM_BamSplit)
          ->Args({100000, 2})
          ->Args({100000, 4})
          ->Args({500000, 2})

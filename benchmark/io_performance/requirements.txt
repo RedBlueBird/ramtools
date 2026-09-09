@@ -1,0 +1,19 @@
+# Python dependencies for the RAMtools benchmark analysis notebook
+# (benchmark_report.ipynb). Install into a virtual environment:
+#
+#   python3 -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+#   jupyter lab benchmark_report.ipynb
+#
+# NOTE: ROOT's thisroot.sh sets JUPYTER_CONFIG_DIR to $ROOTSYS/etc/notebook, which is
+# read-only for a system-wide ROOT install and makes `jupyter lab` crash on first-run
+# config migration. If you source ROOT, launch with a writable config dir, e.g.:
+#   JUPYTER_CONFIG_DIR="$HOME/.jupyter" jupyter lab benchmark_report.ipynb
+#
+# The system Python on many distros is PEP-668 "externally managed", so a venv
+# (or pipx) is the supported way to install these.
+numpy>=1.21
+pandas>=1.5
+matplotlib>=3.5
+jupyterlab>=4.0
+ipykernel>=6.0   # the Python 3 kernel that actually runs the cells

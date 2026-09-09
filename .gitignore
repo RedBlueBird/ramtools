@@ -16,7 +16,7 @@ tmp/
 *.fq
 *.bk
 *.rootix
-build/
+build*/
 cmake-build-*/
 Build/
 BUILD/

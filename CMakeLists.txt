@@ -24,7 +24,7 @@ if(ENABLE_COVERAGE)
     endif()
 endif()
 
-set(ROOT_MIN_VERSION 6.26)
+set(ROOT_MIN_VERSION 6.38)
 find_package(ROOT ${ROOT_MIN_VERSION} REQUIRED COMPONENTS Core RIO Tree ROOTNTuple ROOTNTupleUtil)
 
 include(${ROOT_USE_FILE})

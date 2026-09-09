@@ -28,6 +28,30 @@ fi
 
 # Absolute path so JSON lands in the build tree and temp files stay out of the source tree.
 ABS_BENCH_DIR="$(cd "${BENCH_DIR}" && pwd)"
+
+# The binaries run from the build tree, so a relative dataset path on the command line
+# would otherwise be resolved against build/benchmark/ rather than the caller's directory
+# -- silently pointing every benchmark at a file that does not exist. Rewrite the
+# path-valued flags to absolute paths before changing directory.
+ORIG_PWD="$PWD"
+RESOLVED_ARGS=()
+for arg in ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}; do
+   case "${arg}" in
+      --sam=*|--bam=*|--ttree-root=*|--rntuple-root=*|--regions-file=*)
+         key="${arg%%=*}"
+         val="${arg#*=}"
+         if [[ -n "${val}" && "${val}" != /* ]]; then
+            val="${ORIG_PWD}/${val}"
+         fi
+         RESOLVED_ARGS+=("${key}=${val}")
+         ;;
+      *)
+         RESOLVED_ARGS+=("${arg}")
+         ;;
+   esac
+done
+EXTRA_ARGS=(${RESOLVED_ARGS[@]+"${RESOLVED_ARGS[@]}"})
+
 cd "${ABS_BENCH_DIR}"
 
 BINARIES=(
@@ -44,7 +68,7 @@ for b in "${BINARIES[@]}"; do
       continue
    fi
    echo "=== ${b} ==="
-   "./${b}" "${EXTRA_ARGS[@]}" \
+   "./${b}" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
       --benchmark_out="${ABS_BENCH_DIR}/${b}.json" \
       --benchmark_out_format=json
 done

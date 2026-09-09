@@ -1,13 +1,12 @@
-#ifndef HOME_JIEFU_PROJECTS_RAMTOOLS_BENCHMARK_BENCHMARK_UTILS_H
-#ifndef GITHUB_WORKSPACE_BENCHMARK_BENCHMARK_UTILS_H
-#define GITHUB_WORKSPACE_BENCHMARK_BENCHMARK_UTILS_H
-
-#pragma once
+#ifndef BENCHMARK_UTILS_H
+#define BENCHMARK_UTILS_H
 
 #include <cstdio>
 #include <filesystem>
 #include <stdio.h> // NOLINT(modernize-deprecated-headers) - fileno is a POSIX extension, not in <cstdio>
 #include <string>
+#include <system_error>
+#include <utility>
 
 #ifdef _WIN32
 #include <fcntl.h>
@@ -79,6 +78,57 @@ private:
    int m_savedStderr = -1;
    int m_devnull = -1;
 };
+
+// Size of one file in bytes, or 0 if it does not exist.
+inline std::size_t FileSize(const std::string &path)
+{
+   std::error_code ec;
+   const auto size = std::filesystem::file_size(path, ec);
+   return ec ? 0 : static_cast<std::size_t>(size);
+}
+
+namespace detail {
+
+// Split "dir/stem" into the directory to scan and the filename prefix to match. A bare
+// prefix scans the current directory, which is where the benchmarks write their output.
+inline std::pair<std::filesystem::path, std::string> SplitPrefix(const std::string &prefix)
+{
+   const std::filesystem::path p(prefix);
+   return {p.has_parent_path() ? p.parent_path() : std::filesystem::path("."), p.filename().string()};
+}
+
+} // namespace detail
+
+// Sum the sizes of every file whose name *starts with* `prefix`.
+//
+// Prefer this to GetTotalFileSize: anchoring at the start of the filename stops one
+// backend's output from being counted under another's pattern, and it does not depend on
+// chromosome names happening to begin with "chr" -- real datasets often use bare `1`,
+// `21`, `X` (GRCh37), which a "..._chr" pattern misses entirely, silently reporting 0 MB.
+// Sidecar index files (.bai, .csi) share the prefix and are therefore included, so a BAM
+// split's total is comparable with an RNTuple's self-contained .root.
+inline std::size_t TotalSizeByPrefix(const std::string &prefix)
+{
+   const auto [dir, stem] = detail::SplitPrefix(prefix);
+   std::error_code ec;
+   std::size_t total = 0;
+   for (const auto &entry : std::filesystem::directory_iterator(dir, ec)) {
+      if (entry.is_regular_file(ec) && entry.path().filename().string().rfind(stem, 0) == 0)
+         total += FileSize(entry.path().string());
+   }
+   return total;
+}
+
+// Remove every file whose name starts with `prefix` (the counterpart to TotalSizeByPrefix).
+inline void CleanupByPrefix(const std::string &prefix)
+{
+   const auto [dir, stem] = detail::SplitPrefix(prefix);
+   std::error_code ec;
+   for (const auto &entry : std::filesystem::directory_iterator(dir, ec)) {
+      if (entry.is_regular_file(ec) && entry.path().filename().string().rfind(stem, 0) == 0)
+         std::remove(entry.path().string().c_str());
+   }
+}
 
 // Sum the sizes of all files in the current directory whose name contains `pattern`.
 inline std::size_t GetTotalFileSize(const std::string &pattern)
