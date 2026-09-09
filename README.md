@@ -10,7 +10,7 @@ RAMTools provides efficient tools for converting SAM files to ROOT's modern, col
 
 ## Requirements
 
-- ROOT 6.26+
+- ROOT 6.38+
 - C++17 compatible compiler
 - CMake 3.16+
 
