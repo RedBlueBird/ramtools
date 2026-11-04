@@ -94,6 +94,14 @@ if(TARGET conversion_time_benchmark)
         COMMAND region_query_benchmark --reads=5000 --benchmark_min_time=1x)
     add_test(NAME benchmark_chromosome_split_runs
         COMMAND chromosome_split_benchmark --reads=2000 --threads=1,2 --benchmark_min_time=1x)
+    # A count that disagrees with htslib's is an error, not a time. chr1:1000 is
+    # base 1000 alone to the RAM tools and 1000 to the end of chr1 to samtools
+    # (see "Querying a region" in the README), so the counts differ; should the
+    # two ever agree, pick another disagreement for this test.
+    add_test(NAME benchmark_reports_disagreeing_counts
+        COMMAND region_query_benchmark --reads=5000 --regions=chr1:1000 --formats=ram,bam --benchmark_min_time=1x)
+    set_tests_properties(benchmark_reports_disagreeing_counts
+        PROPERTIES PASS_REGULAR_EXPRESSION "RAM counted [0-9]+ records in chr1:1000, BAM [0-9]+")
     add_test(NAME benchmark_columnar_read_runs
         COMMAND columnar_read_benchmark --reads=5000 --benchmark_min_time=1x)
     set_tests_properties(benchmark_conversion_runs benchmark_region_query_runs benchmark_chromosome_split_runs

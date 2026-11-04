@@ -313,6 +313,8 @@ bool ScanRecords(const std::string &path, const std::string &ref, bool flagstat_
    int read = 0;
    while ((read = sam_read1(in.get(), hdr.get(), rec.get())) >= 0) {
       totals.records++;
+      if (rec->core.tid >= 0)
+         totals.placed++;
       totals.flag_sum += rec->core.flag;
    }
    return read < -1 ? Fail("cannot read " + path) : true;

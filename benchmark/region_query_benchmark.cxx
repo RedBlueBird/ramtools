@@ -11,6 +11,8 @@
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <map>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -40,7 +42,25 @@
 // Counts the records of a region in one format; negative on failure.
 using CountFn = std::function<int64_t(const std::string &region)>;
 
-static void BM_Count(benchmark::State &state, const CountFn &count, const std::string &region, double file_mb)
+// The count every format must give for a region: htslib's, which is samtools'.
+// Each region is counted once, the first time a row asks; copies share the
+// counts. Without another format to check against, name is empty.
+struct Reference {
+   std::string name;
+   CountFn count;
+   std::shared_ptr<std::map<std::string, int64_t>> counted = std::make_shared<std::map<std::string, int64_t>>();
+
+   [[nodiscard]] int64_t Expected(const std::string &region) const
+   {
+      const auto known = counted->find(region);
+      if (known != counted->end())
+         return known->second;
+      return (*counted)[region] = count(region);
+   }
+};
+
+static void BM_Count(benchmark::State &state, const std::string &format, const CountFn &count,
+                     const std::string &region, double file_mb, const Reference &reference)
 {
    int64_t total_reads_processed = 0;
    int64_t reads_in_this_run = 0;
@@ -49,9 +69,19 @@ static void BM_Count(benchmark::State &state, const CountFn &count, const std::s
       reads_in_this_run = count(region);
       if (reads_in_this_run < 0) {
          state.SkipWithError("the count failed");
-         break;
+         return;
       }
       total_reads_processed += reads_in_this_run;
+   }
+
+   // A time for a wrong count is not a result. Checked after the timing.
+   if (!reference.name.empty() && reference.name != format) {
+      const int64_t expected = reference.Expected(region);
+      if (reads_in_this_run != expected) {
+         state.SkipWithError(format + " counted " + std::to_string(reads_in_this_run) + " records in " + region + ", " +
+                             reference.name + " " + std::to_string(expected));
+         return;
+      }
    }
 
    state.SetItemsProcessed(total_reads_processed);
@@ -207,11 +237,24 @@ int main(int argc, char **argv)
       return 1;
    }
 
+   // Every format is checked against htslib's count: BAM's, or SAM's or CRAM's
+   // when there is no BAM. A RAM file alone has nothing to be checked against.
+   Reference reference;
+   for (const char *name : {"BAM", "SAM", "CRAM"}) {
+      const auto found =
+         std::find_if(columns.begin(), columns.end(), [name](const Column &c) { return c.name == name; });
+      if (found != columns.end()) {
+         reference.name = found->name;
+         reference.count = found->count;
+         break;
+      }
+   }
+
    // Region by region, each format's row after the other's.
    for (std::size_t i = 0; i < regions.size(); ++i) {
       for (const Column &column : columns)
-         ::benchmark::RegisterBenchmark("RegionQuery/r" + std::to_string(i) + "/" + column.name, BM_Count, column.count,
-                                        regions[i], FileMiB(column.path))
+         ::benchmark::RegisterBenchmark("RegionQuery/r" + std::to_string(i) + "/" + column.name, BM_Count, column.name,
+                                        column.count, regions[i], FileMiB(column.path), reference)
             ->Unit(benchmark::kMillisecond);
    }
 

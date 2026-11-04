@@ -48,7 +48,13 @@ int64_t ScanRegion(const std::string &path, const std::string &region);
 /// What a scan of every record adds up, for comparing scans across formats.
 struct ScanTotals {
    int64_t records = 0;
+   int64_t placed = 0;    ///< Records with a reference, which a split by reference keeps
    uint64_t flag_sum = 0; ///< The sum of every record's FLAG
+
+   bool operator==(const ScanTotals &other) const
+   {
+      return records == other.records && placed == other.placed && flag_sum == other.flag_sum;
+   }
 };
 
 /// Reads every record of a SAM, BAM or CRAM and adds up \p totals. With

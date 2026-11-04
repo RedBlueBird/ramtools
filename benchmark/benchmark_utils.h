@@ -76,6 +76,10 @@ bool MakeOnce(const std::string &path, const std::function<bool()> &make);
 /// silenced. False, with the reason printed, on failure.
 bool ConvertToRam(const std::string &sam, const std::string &ram, int threads);
 
+/// The records in a RAM file, from its METADATA; -1, with the reason printed,
+/// when it cannot be opened.
+int64_t RamRecords(const std::string &path);
+
 /// The records in a SAM file, header lines not counted. Counted once per file.
 int64_t CountSamRecords(const std::string &path);
 
@@ -86,6 +90,9 @@ double FileMiB(const std::string &path);
 /// converters' -threads does for the steps that compress pages on it, or off
 /// for 1.
 void SetImplicitMT(int threads);
+
+/// The files in \p dir whose names start with \p prefix.
+std::vector<std::string> FilesWithPrefix(const std::string &dir, const std::string &prefix);
 
 /// The sum of the sizes of the files in \p dir whose names start with \p prefix.
 uint64_t TotalSizeWithPrefix(const std::string &dir, const std::string &prefix);

@@ -11,7 +11,10 @@
 #include <benchmark/benchmark.h>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <iostream>
+#include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -23,12 +26,51 @@
 // gets a row with flagstat's fields too. The full scans decode every field of
 // every format, RAM's names and qualities blocks included.
 //
-// Every row adds up FLAG over the file, and its label shows the sum and the
-// records read: rows of the same input must agree. Every scan opens its file
-// for the call, as the region queries do.
+// Every row adds up FLAG over the file and counts the records it read, and
+// must find what htslib finds, else it reports an error instead of a time.
+// Every scan opens its file for the call, as the region queries do.
+
+// What every scan of the input must find: htslib's scan of the BAM, or of the
+// SAM or the CRAM when there is no BAM, made once, the first time a row asks;
+// copies share it. With a RAM file alone, the records its METADATA counts, and
+// no FLAG sum to check.
+struct Expected {
+   std::string name;
+   std::function<ScanTotals()> scan;
+   bool has_flag_sum = true;
+   std::shared_ptr<std::optional<ScanTotals>> totals = std::make_shared<std::optional<ScanTotals>>();
+
+   [[nodiscard]] const ScanTotals &Get() const
+   {
+      if (!*totals)
+         *totals = scan();
+      return **totals;
+   }
+};
+
+// The counters and label of a scan that read \p records with FLAG sum
+// \p flag_sum, or an error when they are not what every format must find.
+// Checked after the timing.
+static void Report(benchmark::State &state, const std::string &format, int64_t records, uint64_t flag_sum,
+                   const std::string &file, const Expected &expected)
+{
+   if (expected.name != format) {
+      const ScanTotals &want = expected.Get();
+      if (records != want.records || (expected.has_flag_sum && flag_sum != want.flag_sum)) {
+         state.SkipWithError(format + " read " + std::to_string(records) + " records with FLAG sum " +
+                             std::to_string(flag_sum) + ", " + expected.name + " " + std::to_string(want.records) +
+                             " with " + std::to_string(want.flag_sum));
+         return;
+      }
+   }
+   state.SetItemsProcessed(state.iterations() * records);
+   state.counters["file_mb"] = FileMiB(file);
+   state.SetLabel(std::to_string(records) + " records, FLAG sum " + std::to_string(flag_sum));
+}
 
 // RAM, reading FLAG and \p columns of "record" and nothing else.
-static void BM_RamColumns(benchmark::State &state, const std::string &ram, const std::vector<std::string> &columns)
+static void BM_RamColumns(benchmark::State &state, const std::string &ram, const std::vector<std::string> &columns,
+                          const Expected &expected)
 {
    uint64_t flag_sum = 0;
    uint64_t rows = 0;
@@ -36,7 +78,7 @@ static void BM_RamColumns(benchmark::State &state, const std::string &ram, const
       const auto file = RAMFile::Open(ram);
       if (!file) {
          state.SkipWithError("cannot open " + ram);
-         break;
+         return;
       }
       auto &reader = file->GetReader();
       auto flag = reader.GetView<uint16_t>("record.flag");
@@ -54,15 +96,13 @@ static void BM_RamColumns(benchmark::State &state, const std::string &ram, const
       }
       benchmark::DoNotOptimize(flag_sum);
    }
-   state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * rows));
    state.counters["columns"] = static_cast<double>(1 + columns.size());
-   state.counters["file_mb"] = FileMiB(ram);
-   state.SetLabel(std::to_string(rows) + " records, FLAG sum " + std::to_string(flag_sum));
+   Report(state, "RAM", static_cast<int64_t>(rows), flag_sum, ram, expected);
 }
 
 // RAM, decoding every column of "record", whatever columns the file has, and
 // every name and quality from their blocks: what a whole record costs.
-static void BM_RamFull(benchmark::State &state, const std::string &ram)
+static void BM_RamFull(benchmark::State &state, const std::string &ram, const Expected &expected)
 {
    uint64_t flag_sum = 0;
    uint64_t rows = 0;
@@ -70,7 +110,7 @@ static void BM_RamFull(benchmark::State &state, const std::string &ram)
       const auto file = RAMFile::Open(ram);
       if (!file) {
          state.SkipWithError("cannot open " + ram);
-         break;
+         return;
       }
       auto &reader = file->GetReader();
       // QualityBlockReader takes QUAL from the record when it is not in a block,
@@ -104,24 +144,24 @@ static void BM_RamFull(benchmark::State &state, const std::string &ram)
       benchmark::DoNotOptimize(bytes);
       benchmark::DoNotOptimize(flag_sum);
    }
-   state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * rows));
-   state.counters["file_mb"] = FileMiB(ram);
-   state.SetLabel(std::to_string(rows) + " records, FLAG sum " + std::to_string(flag_sum));
+   Report(state, "RAM", static_cast<int64_t>(rows), flag_sum, ram, expected);
 }
 
 // SAM, BAM or CRAM, through htslib.
-static void BM_HtsScan(benchmark::State &state, const std::string &path, const std::string &ref, bool flagstat_fields)
+static void BM_HtsScan(benchmark::State &state, const std::string &format, const std::string &path,
+                       const std::string &ref, bool flagstat_fields, const Expected &expected)
 {
    ScanTotals totals;
    for ([[maybe_unused]] const auto &_ : state) {
       if (!ScanRecords(path, ref, flagstat_fields, totals)) {
          state.SkipWithError("cannot scan " + path);
-         break;
+         return;
       }
    }
-   state.SetItemsProcessed(state.iterations() * totals.records);
-   state.counters["file_mb"] = FileMiB(path);
-   state.SetLabel(std::to_string(totals.records) + " records, FLAG sum " + std::to_string(totals.flag_sum));
+   // The flagstat row of a CRAM is checked against the full scan of another
+   // format, never against itself.
+   Report(state, flagstat_fields ? format + " flagstat fields" : format, totals.records, totals.flag_sum, path,
+          expected);
 }
 
 int main(int argc, char **argv)
@@ -172,29 +212,63 @@ int main(int argc, char **argv)
          sam = input.path;
    }
 
+   // htslib's full scan of the BAM, else of the SAM, else of the CRAM.
+   Expected expected;
+   std::string truth;
+   if (!bam.empty()) {
+      expected.name = "BAM";
+      truth = bam;
+   } else if (!sam.empty()) {
+      expected.name = "SAM";
+      truth = sam;
+   } else if (!cram.empty()) {
+      expected.name = "CRAM";
+      truth = cram;
+   }
+   if (!truth.empty()) {
+      expected.scan = [path = truth, fasta = opts.ref] {
+         ScanTotals totals;
+         if (!ScanRecords(path, fasta, /*flagstat_fields=*/false, totals))
+            totals.records = -1;
+         return totals;
+      };
+   } else {
+      expected.name = "METADATA";
+      expected.has_flag_sum = false;
+      expected.scan = [ram] {
+         ScanTotals totals;
+         totals.records = RamRecords(ram);
+         return totals;
+      };
+   }
+
    const std::vector<std::string> flagstat = {"refid", "refnext", "mapq"};
    if (WantsFormat(opts, "ram")) {
-      ::benchmark::RegisterBenchmark("ColumnScan/RAM/flag", BM_RamColumns, ram, std::vector<std::string>{})
+      ::benchmark::RegisterBenchmark("ColumnScan/RAM/flag", BM_RamColumns, ram, std::vector<std::string>{}, expected)
          ->Unit(benchmark::kMillisecond);
-      ::benchmark::RegisterBenchmark("ColumnScan/RAM/flagstat", BM_RamColumns, ram, flagstat)
+      ::benchmark::RegisterBenchmark("ColumnScan/RAM/flagstat", BM_RamColumns, ram, flagstat, expected)
          ->Unit(benchmark::kMillisecond);
       ::benchmark::RegisterBenchmark("ColumnScan/RAM/flag+tag_nm", BM_RamColumns, ram,
-                                     std::vector<std::string>{"tag_nm"})
+                                     std::vector<std::string>{"tag_nm"}, expected)
          ->Unit(benchmark::kMillisecond);
    }
    if (!cram.empty())
-      ::benchmark::RegisterBenchmark("ColumnScan/CRAM/flagstat", BM_HtsScan, cram, opts.ref, /*flagstat_fields=*/true)
+      ::benchmark::RegisterBenchmark("ColumnScan/CRAM/flagstat", BM_HtsScan, "CRAM", cram, opts.ref,
+                                     /*flagstat_fields=*/true, expected)
          ->Unit(benchmark::kMillisecond);
    if (WantsFormat(opts, "ram"))
-      ::benchmark::RegisterBenchmark("FullScan/RAM", BM_RamFull, ram)->Unit(benchmark::kMillisecond);
+      ::benchmark::RegisterBenchmark("FullScan/RAM", BM_RamFull, ram, expected)->Unit(benchmark::kMillisecond);
    if (!bam.empty())
-      ::benchmark::RegisterBenchmark("FullScan/BAM", BM_HtsScan, bam, std::string(), /*flagstat_fields=*/false)
+      ::benchmark::RegisterBenchmark("FullScan/BAM", BM_HtsScan, "BAM", bam, std::string(), /*flagstat_fields=*/false,
+                                     expected)
          ->Unit(benchmark::kMillisecond);
    if (!cram.empty())
-      ::benchmark::RegisterBenchmark("FullScan/CRAM", BM_HtsScan, cram, opts.ref, /*flagstat_fields=*/false)
+      ::benchmark::RegisterBenchmark("FullScan/CRAM", BM_HtsScan, "CRAM", cram, opts.ref, /*flagstat_fields=*/false,
+                                     expected)
          ->Unit(benchmark::kMillisecond);
    if (!sam.empty())
-      ::benchmark::RegisterBenchmark("FullScan/SAM", BM_HtsScan, sam, std::string(), /*flagstat_fields=*/false)
+      ::benchmark::RegisterBenchmark("FullScan/SAM", BM_HtsScan, "SAM", sam, std::string(), /*flagstat_fields=*/false,
+                                     expected)
          ->Unit(benchmark::kMillisecond);
 
    ::benchmark::RunSpecifiedBenchmarks();

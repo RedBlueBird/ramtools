@@ -19,12 +19,19 @@
 // bamtoramntuple does. Every row reports its output's size and the SAM's, so
 // the formats compare by size as well as by time.
 
-// The counters every conversion reports. The rates are of the input's records
-// and bytes, per second of wall time.
-static void SetConversionCounters(benchmark::State &state, const SamInput &input, const std::string &source,
-                                  const std::string &output)
+// The counters every conversion reports, or an error when \p written, the
+// records in the output, is not the input's count: a time for a conversion
+// that lost records is not a result. The rates are of the input's records and
+// bytes, per second of wall time.
+static void Report(benchmark::State &state, const SamInput &input, const std::string &source, const std::string &output,
+                   int64_t written)
 {
    const int64_t records = input.reads > 0 ? input.reads : CountSamRecords(input.path);
+   if (written != records) {
+      state.SkipWithError(output + " holds " + std::to_string(written) + " records, " + input.path + " " +
+                          std::to_string(records));
+      return;
+   }
    state.counters["file_size_mb"] = FileMiB(output);
    state.counters["sam_size_mb"] = FileMiB(input.path);
    state.counters["reads"] = static_cast<double>(records);
@@ -49,10 +56,10 @@ BM_SamToRam(benchmark::State &state, const SamInput &input, const std::string &o
       }
       if (!converted) {
          state.SkipWithError("samtoramntuple failed on " + input.path);
-         break;
+         return;
       }
    }
-   SetConversionCounters(state, input, input.path, output);
+   Report(state, input, input.path, output, RamRecords(output));
    std::remove(output.c_str());
 }
 
@@ -66,10 +73,13 @@ BM_SamToHts(benchmark::State &state, const SamInput &input, const std::string &o
    for ([[maybe_unused]] const auto &_ : state) {
       if (!ConvertAlignments(input.path, output, threads, opts.ref)) {
          state.SkipWithError("the conversion of " + input.path + " to " + output + " failed");
-         break;
+         return;
       }
    }
-   SetConversionCounters(state, input, input.path, output);
+   ScanTotals written;
+   if (!ScanRecords(output, opts.ref, /*flagstat_fields=*/false, written))
+      written.records = -1;
+   Report(state, input, input.path, output, written.records);
    std::remove(output.c_str());
 }
 
@@ -96,12 +106,13 @@ static void BM_BamToRam(benchmark::State &state, const SamInput &input, const st
       }
       // bamtoramntuple() returns nothing: a failure shows as no output.
       if (FileMiB(output) == 0.0) {
+         SetImplicitMT(/*threads=*/1);
          state.SkipWithError("bamtoramntuple failed on " + bam);
-         break;
+         return;
       }
    }
    SetImplicitMT(/*threads=*/1);
-   SetConversionCounters(state, input, bam, output);
+   Report(state, input, bam, output, RamRecords(output));
    std::remove(output.c_str());
 }
 

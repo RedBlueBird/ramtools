@@ -3,6 +3,7 @@
 #include "benchmark_config.h"
 #include "generate_sam_benchmark.h"
 #include "ramcore/SamToNTuple.h"
+#include "rntuple/RAMFile.h"
 #include "rntuple/RAMNTupleRecord.h"
 
 #include <TROOT.h>
@@ -135,6 +136,12 @@ bool ConvertToRam(const std::string &sam, const std::string &ram, int threads)
    return converted;
 }
 
+int64_t RamRecords(const std::string &path)
+{
+   const auto file = RAMFile::Open(path);
+   return file ? static_cast<int64_t>(file->GetReader().GetNEntries()) : -1;
+}
+
 int64_t CountSamRecords(const std::string &path)
 {
    static std::map<std::string, int64_t> counted;
@@ -167,22 +174,18 @@ void SetImplicitMT(int threads)
       ROOT::EnableImplicitMT(threads);
 }
 
-namespace {
-
 // Collected before the caller acts on them, so that removing files does not
 // change the directory while it is being listed.
-std::vector<std::filesystem::path> FilesWithPrefix(const std::string &dir, const std::string &prefix)
+std::vector<std::string> FilesWithPrefix(const std::string &dir, const std::string &prefix)
 {
-   std::vector<std::filesystem::path> files;
+   std::vector<std::string> files;
    std::error_code ec;
    for (const auto &entry : std::filesystem::directory_iterator(dir, ec)) {
       if (entry.is_regular_file(ec) && entry.path().filename().string().rfind(prefix, 0) == 0)
-         files.push_back(entry.path());
+         files.push_back(entry.path().string());
    }
    return files;
 }
-
-} // namespace
 
 uint64_t TotalSizeWithPrefix(const std::string &dir, const std::string &prefix)
 {
