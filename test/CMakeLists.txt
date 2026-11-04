@@ -102,6 +102,22 @@ if(TARGET conversion_time_benchmark)
         COMMAND region_query_benchmark --reads=5000 --regions=chr1:1000 --formats=ram,bam --benchmark_min_time=1x)
     set_tests_properties(benchmark_reports_disagreeing_counts
         PROPERTIES PASS_REGULAR_EXPRESSION "RAM counted [0-9]+ records in chr1:1000, BAM [0-9]+")
+    # The runner: every binary with the flags it takes, JSON per binary, and a
+    # failure for a typo or for any benchmark that reports an error.
+    set(runner bash ${CMAKE_SOURCE_DIR}/scripts/run_benchmark_suite.sh)
+    add_test(NAME benchmark_suite_runs
+        COMMAND ${runner} ${CMAKE_BINARY_DIR} -- --reads=2000 --threads=1 --benchmark_min_time=1x)
+    add_test(NAME benchmark_suite_rejects_unknown_flag COMMAND ${runner} ${CMAKE_BINARY_DIR} -- --regoins=chr1)
+    add_test(NAME benchmark_suite_fails_on_benchmark_error
+        COMMAND ${runner} ${CMAKE_BINARY_DIR} -- --reads=2000 --threads=1 --regions=chr1:1000 --benchmark_min_time=1x)
+    # A results directory each, as ctest -j runs them side by side.
+    foreach(test benchmark_suite_runs benchmark_suite_rejects_unknown_flag benchmark_suite_fails_on_benchmark_error)
+        set_tests_properties(${test} PROPERTIES ENVIRONMENT "RAMTOOLS_BENCH_RESULTS=${CMAKE_CURRENT_BINARY_DIR}/${test}")
+    endforeach()
+    set_tests_properties(benchmark_suite_rejects_unknown_flag PROPERTIES
+        PASS_REGULAR_EXPRESSION "no benchmark takes --regoins")
+    set_tests_properties(benchmark_suite_fails_on_benchmark_error PROPERTIES
+        PASS_REGULAR_EXPRESSION "failed: region_query_benchmark \\(a benchmark reported an error\\)")
     add_test(NAME benchmark_columnar_read_runs
         COMMAND columnar_read_benchmark --reads=5000 --benchmark_min_time=1x)
     set_tests_properties(benchmark_conversion_runs benchmark_region_query_runs benchmark_chromosome_split_runs

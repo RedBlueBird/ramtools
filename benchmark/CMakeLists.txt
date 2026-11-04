@@ -64,20 +64,18 @@ if(RAMTOOLS_BUILD_BENCHMARKS)
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
 
+    # `cmake --build <dir> --target benchmark` runs the whole suite through the
+    # runner, which gives each binary the flags it takes and writes the JSON to
+    # <dir>/benchmark/results; RAMTOOLS_BENCH_ARGS holds the flags. Relative
+    # paths in them are taken from the source directory.
+    set(RAMTOOLS_BENCH_ARGS "" CACHE STRING
+        "Flags for the benchmark target, e.g. --sam=reads.sam --threads=1,4")
+    separate_arguments(ramtools_bench_args UNIX_COMMAND "${RAMTOOLS_BENCH_ARGS}")
     add_custom_target(benchmark
-        COMMAND ${CMAKE_COMMAND} -E echo "=== Conversion Time Benchmark ==="
-        COMMAND conversion_time_benchmark
-        COMMAND ${CMAKE_COMMAND} -E echo ""
-        COMMAND ${CMAKE_COMMAND} -E echo "=== Region Query Benchmark ==="
-        COMMAND region_query_benchmark
-        COMMAND ${CMAKE_COMMAND} -E echo ""
-        COMMAND ${CMAKE_COMMAND} -E echo "=== Chromosome Split Benchmark ==="
-        COMMAND chromosome_split_benchmark
-        COMMAND ${CMAKE_COMMAND} -E echo ""
-        COMMAND ${CMAKE_COMMAND} -E echo "=== Columnar Read Benchmark ==="
-        COMMAND columnar_read_benchmark
+        COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/run_benchmark_suite.sh ${CMAKE_BINARY_DIR} -- ${ramtools_bench_args}
         DEPENDS conversion_time_benchmark region_query_benchmark chromosome_split_benchmark columnar_read_benchmark
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         COMMENT "Running all RAM tools benchmarks"
+        VERBATIM
     )
 endif()
