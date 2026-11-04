@@ -295,3 +295,25 @@ int64_t ScanRegion(const std::string &path, const std::string &region)
    }
    return read < -1 ? FailCount("cannot read " + path) : count;
 }
+
+bool ScanRecords(const std::string &path, const std::string &ref, bool flagstat_fields, ScanTotals &totals)
+{
+   const SamFile in = OpenForReading(path, ref, /*threads=*/1);
+   if (!in)
+      return false;
+   if (flagstat_fields && hts_get_format(in.get())->format == cram &&
+       // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): htslib's option setter
+       hts_set_opt(in.get(), CRAM_OPT_REQUIRED_FIELDS, SAM_FLAG | SAM_RNAME | SAM_RNEXT | SAM_MAPQ) < 0)
+      return Fail("cannot limit the fields decoded from " + path);
+   const Header hdr(sam_hdr_read(in.get()));
+   if (!hdr)
+      return Fail("cannot read the header of " + path);
+   const Record rec(bam_init1());
+   totals = ScanTotals{};
+   int read = 0;
+   while ((read = sam_read1(in.get(), hdr.get(), rec.get())) >= 0) {
+      totals.records++;
+      totals.flag_sum += rec->core.flag;
+   }
+   return read < -1 ? Fail("cannot read " + path) : true;
+}

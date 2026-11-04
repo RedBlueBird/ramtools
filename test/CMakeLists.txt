@@ -94,8 +94,10 @@ if(TARGET conversion_time_benchmark)
         COMMAND region_query_benchmark --reads=5000 --benchmark_min_time=1x)
     add_test(NAME benchmark_chromosome_split_runs
         COMMAND chromosome_split_benchmark --reads=2000 --threads=1,2 --benchmark_min_time=1x)
+    add_test(NAME benchmark_columnar_read_runs
+        COMMAND columnar_read_benchmark --reads=5000 --benchmark_min_time=1x)
     set_tests_properties(benchmark_conversion_runs benchmark_region_query_runs benchmark_chromosome_split_runs
-        PROPERTIES FAIL_REGULAR_EXPRESSION "ERROR OCCURRED")
+        benchmark_columnar_read_runs PROPERTIES FAIL_REGULAR_EXPRESSION "ERROR OCCURRED")
 endif()
 
 if(TARGET ramdump)

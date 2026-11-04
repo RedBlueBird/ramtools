@@ -45,4 +45,16 @@ int64_t CountRegion(const std::string &path, const std::string &region, const st
 /// the region, the rule the index uses.
 int64_t ScanRegion(const std::string &path, const std::string &region);
 
+/// What a scan of every record adds up, for comparing scans across formats.
+struct ScanTotals {
+   int64_t records = 0;
+   uint64_t flag_sum = 0; ///< The sum of every record's FLAG
+};
+
+/// Reads every record of a SAM, BAM or CRAM and adds up \p totals. With
+/// \p flagstat_fields a CRAM decodes only FLAG, RNAME, RNEXT and MAPQ, what
+/// `samtools flagstat` reads; a BAM or a SAM record is always decoded whole.
+/// False, with the reason printed, on failure.
+bool ScanRecords(const std::string &path, const std::string &ref, bool flagstat_fields, ScanTotals &totals);
+
 #endif // BENCHMARK_BAM_OPS_H

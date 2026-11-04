@@ -3,7 +3,6 @@
 #include "benchmark_config.h"
 #include "benchmark_utils.h"
 #include "ramcore/RAMNTupleView.h"
-#include "ramcore/SamToNTuple.h"
 #include "rntuple/RAMFile.h"
 #include "rntuple/RAMNTupleRecord.h"
 #include <algorithm>
@@ -167,16 +166,8 @@ int main(int argc, char **argv)
       const SamInput input = SamInputs(opts, dir, /*sorted=*/true).front();
       PrepareSamInput(input);
       ram = dir.File(input.stem + ".ram");
-      bool converted = false;
-      {
-         const StdoutSilencer silence;
-         converted = samtoramntuple(input.path.c_str(), ram.c_str(), /*compression_algorithm=*/505,
-                                    /*quality_policy=*/RAMNTupleRecord::kPhred33, threads);
-      }
-      if (!converted) {
-         std::cerr << "region_query_benchmark: could not convert " << input.path << "\n";
+      if (!ConvertToRam(input.path, ram, threads))
          return 1;
-      }
       const std::vector<std::pair<std::string, std::string>> indexed = {{"bam", "BAM"}, {"cram", "CRAM"}};
       for (const auto &[format, name] : indexed) {
          if (!WantsFormat(opts, format) || (format == "cram" && opts.ref.empty()))

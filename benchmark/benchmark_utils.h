@@ -71,6 +71,11 @@ void PrepareSamInput(const SamInput &input);
 /// from an earlier run in a kept --work-dir, which may have had another input.
 bool MakeOnce(const std::string &path, const std::function<bool()> &make);
 
+/// Converts \p sam to the RAM file \p ram as samtoramntuple does by default
+/// (ZSTD level 5, lossless qualities), on \p threads threads, with its output
+/// silenced. False, with the reason printed, on failure.
+bool ConvertToRam(const std::string &sam, const std::string &ram, int threads);
+
 /// The records in a SAM file, header lines not counted. Counted once per file.
 int64_t CountSamRecords(const std::string &path);
 

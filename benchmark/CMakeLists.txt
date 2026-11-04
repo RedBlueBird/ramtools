@@ -52,7 +52,15 @@ if(RAMTOOLS_BUILD_BENCHMARKS)
             benchmark_common
     )
 
-    install(TARGETS conversion_time_benchmark region_query_benchmark chromosome_split_benchmark
+    ROOT_EXECUTABLE(columnar_read_benchmark
+        columnar_read_benchmark.cxx
+        LIBRARIES
+            benchmark::benchmark
+            ramcore
+            benchmark_common
+    )
+
+    install(TARGETS conversion_time_benchmark region_query_benchmark chromosome_split_benchmark columnar_read_benchmark
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
 
@@ -65,7 +73,10 @@ if(RAMTOOLS_BUILD_BENCHMARKS)
         COMMAND ${CMAKE_COMMAND} -E echo ""
         COMMAND ${CMAKE_COMMAND} -E echo "=== Chromosome Split Benchmark ==="
         COMMAND chromosome_split_benchmark
-        DEPENDS conversion_time_benchmark region_query_benchmark chromosome_split_benchmark
+        COMMAND ${CMAKE_COMMAND} -E echo ""
+        COMMAND ${CMAKE_COMMAND} -E echo "=== Columnar Read Benchmark ==="
+        COMMAND columnar_read_benchmark
+        DEPENDS conversion_time_benchmark region_query_benchmark chromosome_split_benchmark columnar_read_benchmark
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Running all RAM tools benchmarks"
     )

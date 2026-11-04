@@ -2,6 +2,8 @@
 
 #include "benchmark_config.h"
 #include "generate_sam_benchmark.h"
+#include "ramcore/SamToNTuple.h"
+#include "rntuple/RAMNTupleRecord.h"
 
 #include <TROOT.h>
 
@@ -118,6 +120,19 @@ bool MakeOnce(const std::string &path, const std::function<bool()> &make)
    const bool ok = make();
    made[path] = ok;
    return ok;
+}
+
+bool ConvertToRam(const std::string &sam, const std::string &ram, int threads)
+{
+   bool converted = false;
+   {
+      const StdoutSilencer silence;
+      converted = samtoramntuple(sam.c_str(), ram.c_str(), /*compression_algorithm=*/505,
+                                 /*quality_policy=*/RAMNTupleRecord::kPhred33, threads);
+   }
+   if (!converted)
+      std::cerr << "cannot convert " << sam << " to " << ram << "\n";
+   return converted;
 }
 
 int64_t CountSamRecords(const std::string &path)
