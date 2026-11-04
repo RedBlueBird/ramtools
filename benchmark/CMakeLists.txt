@@ -14,6 +14,7 @@ if(RAMTOOLS_BUILD_BENCHMARKS)
     include(GoogleBenchmark)
 
     add_library(benchmark_common STATIC
+        bam_ops.cxx
         benchmark_config.cxx
         benchmark_utils.cxx
     )
@@ -22,16 +23,7 @@ if(RAMTOOLS_BUILD_BENCHMARKS)
         ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
-    target_link_libraries(benchmark_common PUBLIC ramcore)
-
-    ROOT_EXECUTABLE(sam_to_ram_benchmark
-        sam_to_ram_benchmark.cxx
-        LIBRARIES
-            benchmark::benchmark
-            ramcore
-            sam_generator
-            benchmark_common
-    )
+    target_link_libraries(benchmark_common PUBLIC ramcore sam_generator PkgConfig::htslib)
 
     ROOT_EXECUTABLE(conversion_time_benchmark
         conversion_time_benchmark.cxx
@@ -60,14 +52,11 @@ if(RAMTOOLS_BUILD_BENCHMARKS)
             benchmark_common
     )
 
-    install(TARGETS sam_to_ram_benchmark conversion_time_benchmark region_query_benchmark chromosome_split_benchmark
+    install(TARGETS conversion_time_benchmark region_query_benchmark chromosome_split_benchmark
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
 
     add_custom_target(benchmark
-        COMMAND ${CMAKE_COMMAND} -E echo "=== SAM to RAM Benchmark ==="
-        COMMAND sam_to_ram_benchmark
-        COMMAND ${CMAKE_COMMAND} -E echo ""
         COMMAND ${CMAKE_COMMAND} -E echo "=== Conversion Time Benchmark ==="
         COMMAND conversion_time_benchmark
         COMMAND ${CMAKE_COMMAND} -E echo ""
@@ -76,7 +65,7 @@ if(RAMTOOLS_BUILD_BENCHMARKS)
         COMMAND ${CMAKE_COMMAND} -E echo ""
         COMMAND ${CMAKE_COMMAND} -E echo "=== Chromosome Split Benchmark ==="
         COMMAND chromosome_split_benchmark
-        DEPENDS sam_to_ram_benchmark conversion_time_benchmark region_query_benchmark chromosome_split_benchmark
+        DEPENDS conversion_time_benchmark region_query_benchmark chromosome_split_benchmark
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Running all RAM tools benchmarks"
     )

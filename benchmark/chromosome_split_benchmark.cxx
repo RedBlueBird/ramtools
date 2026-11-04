@@ -1,189 +1,106 @@
 #include <benchmark/benchmark.h>
+#include "bam_ops.h"
 #include "benchmark_config.h"
 #include "benchmark_utils.h"
 #include "ramcore/SamToNTuple.h"
-#include "generate_sam_benchmark.h"
-#include <cstdio>
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <vector>
+#include <TROOT.h>
+#include <cstdint>
 #include <string>
-#include <thread>
 
-static void CleanupFiles(const std::string &pattern)
+// Both sides start from the SAM and end with one file per reference. BAM needs
+// a sorted, indexed BAM to extract references from, so its time includes making
+// one, as the samtools pipeline did (view, sort, index, view per reference).
+
+static double MiB(uint64_t bytes)
 {
-   for (const auto &entry : std::filesystem::directory_iterator(".")) {
-      if (entry.path().filename().string().find(pattern) != std::string::npos) {
-         std::remove(entry.path().c_str());
-      }
-   }
+   return static_cast<double>(bytes) / (1024.0 * 1024.0);
 }
 
-static size_t GetTotalFileSize(const std::string &pattern)
+static void SetRates(benchmark::State &state, const SamInput &input)
 {
-   size_t total = 0;
-   for (const auto &entry : std::filesystem::directory_iterator(".")) {
-      if (entry.path().filename().string().find(pattern) != std::string::npos) {
-         total += std::filesystem::file_size(entry.path());
-      }
-   }
-   return total;
+   const int64_t records = input.reads > 0 ? input.reads : CountSamRecords(input.path);
+   state.counters["reads/s"] = benchmark::Counter(static_cast<double>(records), benchmark::Counter::kIsRate);
 }
 
-static std::vector<std::string> GetChromosomes(const std::string &sam_file)
+// ROOT's implicit threads compress the split's pages, as samtoramntuple -split
+// -threads N enables them; 1 disables them.
+static void SetImplicitMT(int threads)
 {
-   std::vector<std::string> chroms;
-   std::ifstream f(sam_file);
-   std::string line;
-
-   while (std::getline(f, line) && line[0] == '@') {
-      if (line.find("@SQ\tSN:") == 0) {
-         size_t start = 7;
-         size_t end = line.find('\t', start);
-         chroms.push_back(line.substr(start, end - start));
-      }
-   }
-   return chroms;
+   if (ROOT::IsImplicitMTEnabled())
+      ROOT::DisableImplicitMT();
+   if (threads > 1)
+      ROOT::EnableImplicitMT(threads);
 }
 
-static void BM_SamtoolsSplit(benchmark::State &state)
+static void BM_BamSplit(benchmark::State &state, const SamInput &input, const std::string &dir)
 {
-   int num_reads = state.range(0);
-   std::string sam_file = "bench_st_" + std::to_string(num_reads) + ".sam";
+   PrepareSamInput(input);
+   const int threads = static_cast<int>(state.range(0));
+   const std::string sorted_bam = dir + "/bam_sorted.bam";
+   const std::string prefix = dir + "/bam_split_";
 
-   GenerateSAMFile(sam_file, num_reads);
-   auto chromosomes = GetChromosomes(sam_file);
-
-   for (auto _ : state) {
-      std::string bam_file = "bench_st_tmp.bam";
-      std::string sorted_bam = "bench_st_sorted.bam";
-
-      system(("samtools view -bS " + sam_file + " -o " + bam_file + " 2>/dev/null").c_str());
-
-      system(("samtools sort " + bam_file + " -o " + sorted_bam + " 2>/dev/null").c_str());
-
-      system(("samtools index " + sorted_bam + " 2>/dev/null").c_str());
-
-      for (const auto &chr : chromosomes) {
-         std::string cmd = "samtools view -b " + sorted_bam + " " + chr + " > bench_st_" + chr + ".bam 2>/dev/null";
-         system(cmd.c_str());
+   for ([[maybe_unused]] const auto &_ : state) {
+      if (!SamToSortedBam(input.path, sorted_bam, threads) || !SplitBam(sorted_bam, prefix, threads)) {
+         state.SkipWithError("the BAM split failed on " + input.path);
+         break;
       }
 
-      state.counters["size_MB"] = GetTotalFileSize("bench_st_chr") / (1024.0 * 1024.0);
-
-      CleanupFiles("bench_st_chr");
-      std::remove(bam_file.c_str());
-      std::remove(sorted_bam.c_str());
-      std::remove((sorted_bam + ".bai").c_str());
+      state.counters["size_MB"] = MiB(TotalSizeWithPrefix(dir, "bam_split_"));
+      RemoveWithPrefix(dir, "bam_split_");
+      RemoveWithPrefix(dir, "bam_sorted.bam");
    }
-
-   std::remove(sam_file.c_str());
-   state.counters["reads/s"] = benchmark::Counter(num_reads, benchmark::Counter::kIsRate);
+   SetRates(state, input);
 }
 
-static void BM_SamtoolsSplitThreaded(benchmark::State &state)
+static void
+BM_ChromosomeSplit(benchmark::State &state, const SamInput &input, const std::string &dir, const BenchmarkOptions &opts)
 {
-   int num_reads = state.range(0);
-   int num_threads = state.range(1);
-   std::string sam_file = "bench_st_mt_" + std::to_string(num_reads) + ".sam";
+   PrepareSamInput(input);
+   const std::string prefix = dir + "/ram_split";
+   SetImplicitMT(static_cast<int>(state.range(0)));
 
-   GenerateSAMFile(sam_file, num_reads);
-   auto chromosomes = GetChromosomes(sam_file);
-
-   for (auto _ : state) {
-      std::string bam_file = "bench_st_mt_tmp.bam";
-      std::string sorted_bam = "bench_st_mt_sorted.bam";
-
-      std::string cmd =
-         "samtools view -@ " + std::to_string(num_threads) + " -bS " + sam_file + " -o " + bam_file + " 2>/dev/null";
-      system(cmd.c_str());
-
-      cmd = "samtools sort -@ " + std::to_string(num_threads) + " -m 1G " + bam_file + " -o " + sorted_bam +
-            " 2>/dev/null";
-      system(cmd.c_str());
-
-      cmd = "samtools index -@ " + std::to_string(num_threads) + " " + sorted_bam + " 2>/dev/null";
-      system(cmd.c_str());
-
-      std::vector<std::thread> threads;
-      for (const auto &chr : chromosomes) {
-         threads.emplace_back([&sorted_bam, &chr]() {
-            std::string cmd =
-               "samtools view -@ 2 -b " + sorted_bam + " " + chr + " > bench_st_mt_" + chr + ".bam 2>/dev/null";
-            system(cmd.c_str());
-         });
-
-         if (threads.size() >= num_threads) {
-            for (auto &t : threads) {
-               t.join();
-            }
-            threads.clear();
-         }
-      }
-
-      for (auto &t : threads) {
-         t.join();
-      }
-
-      state.counters["size_MB"] = GetTotalFileSize("bench_st_mt_chr") / (1024.0 * 1024.0);
-      state.counters["threads"] = num_threads;
-
-      CleanupFiles("bench_st_mt_chr");
-      std::remove(bam_file.c_str());
-      std::remove(sorted_bam.c_str());
-      std::remove((sorted_bam + ".bai").c_str());
-   }
-
-   std::remove(sam_file.c_str());
-   state.counters["reads/s"] = benchmark::Counter(num_reads, benchmark::Counter::kIsRate);
-}
-
-static void BM_ChromosomeSplit(benchmark::State &state, const BenchmarkOptions &opts)
-{
-   int num_reads = state.range(0);
-   std::string sam_file = "bench_split_par_" + std::to_string(num_reads) + ".sam";
-
-   GenerateSAMFile(sam_file, num_reads);
-
-   for (auto _ : state) {
+   for ([[maybe_unused]] const auto &_ : state) {
       {
          const StdoutSilencer silence;
-         samtoramntuple_split_by_chromosome(sam_file.c_str(), /*output_prefix=*/"bench_split_par_out", opts.compression,
-                                            opts.quality_policy);
+         samtoramntuple_split_by_chromosome(input.path.c_str(), prefix.c_str(), opts.compression, opts.quality_policy);
       }
 
-      state.counters["size_MB"] = GetTotalFileSize("bench_split_par_out_") / (1024.0 * 1024.0);
-      CleanupFiles("bench_split_par_out_");
+      state.counters["size_MB"] = MiB(TotalSizeWithPrefix(dir, "ram_split_"));
+      RemoveWithPrefix(dir, "ram_split_");
    }
-
-   std::remove(sam_file.c_str());
-   state.counters["reads/s"] = benchmark::Counter(num_reads, benchmark::Counter::kIsRate);
+   SetImplicitMT(/*threads=*/1);
+   SetRates(state, input);
 }
 
 int main(int argc, char **argv)
 {
    BenchmarkOptions opts;
    opts.reads = {100000, 500000, 1000000};
-   opts.threads = {2, 4};
-   if (!ParseBenchmarkFlags(&argc, argv, kFlagCompression | kFlagQuality | kFlagReads | kFlagThreads, opts))
+   opts.threads = {1, 2, 4};
+   if (!ParseBenchmarkFlags(
+          &argc, argv, kFlagCompression | kFlagQuality | kFlagReads | kFlagThreads | kFlagSam | kFlagWorkDir, opts))
       return 1;
-
-   auto *samtools = ::benchmark::RegisterBenchmark("BM_SamtoolsSplit", BM_SamtoolsSplit);
-   auto *samtools_threaded = ::benchmark::RegisterBenchmark("BM_SamtoolsSplitThreaded", BM_SamtoolsSplitThreaded);
-   auto *split = ::benchmark::RegisterBenchmark("BM_ChromosomeSplit", BM_ChromosomeSplit, opts);
-   for (const int reads : opts.reads) {
-      samtools->Arg(reads);
-      for (const int threads : opts.threads)
-         samtools_threaded->Args({reads, threads});
-      split->Arg(reads);
-   }
-   for (auto *bench : {samtools, samtools_threaded, split})
-      bench->Unit(benchmark::kMillisecond);
-
+   // Before any input is prepared, so that a mistyped flag or --help returns at once.
    ::benchmark::Initialize(&argc, argv);
    if (::benchmark::ReportUnrecognizedArguments(argc, argv))
       return 1;
+   const WorkDir dir(opts.work_dir);
+
+   // Synthetic inputs are sorted, as aligned reads are before they are split;
+   // the BAM side sorts an unsorted --sam itself. The work happens on threads
+   // the CPU time of this one does not see: every rate goes by wall time.
+   for (const SamInput &input : SamInputs(opts, dir, /*sorted=*/true)) {
+      auto *bam = ::benchmark::RegisterBenchmark("BM_BamSplit/" + input.name, BM_BamSplit, input, dir.Path());
+      auto *ram = ::benchmark::RegisterBenchmark("BM_ChromosomeSplit/" + input.name, BM_ChromosomeSplit, input,
+                                                 dir.Path(), opts);
+      for (auto *bench : {bam, ram}) {
+         bench->ArgName("threads");
+         for (const int threads : opts.threads)
+            bench->Arg(threads);
+         bench->UseRealTime()->Unit(benchmark::kMillisecond);
+      }
+   }
+
    ::benchmark::RunSpecifiedBenchmarks();
    ::benchmark::Shutdown();
    return 0;

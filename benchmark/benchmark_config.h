@@ -16,6 +16,8 @@ enum BenchmarkFlag : uint8_t {
    kFlagThreads = 1U << 3,     ///< --threads=N[,N...]
    kFlagRam = 1U << 4,         ///< --ram=FILE, or $RAMTOOLS_BENCH_RNTUPLE
    kFlagRegions = 1U << 5,     ///< --regions=REGION[,REGION...], or $RAMTOOLS_BENCH_REGIONS
+   kFlagSam = 1U << 6,         ///< --sam=FILE, instead of synthetic records
+   kFlagWorkDir = 1U << 7,     ///< --work-dir=DIR
 };
 
 /// What a benchmark runs on. The members a binary does not take a flag for
@@ -28,6 +30,8 @@ struct BenchmarkOptions {
    std::vector<int> threads; ///< Thread counts, one benchmark each
    std::string ram;          ///< A RAM file written by samtoramntuple
    std::vector<std::string> regions;
+   std::string sam;      ///< A SAM file to run on; empty for synthetic records, one input per count in reads
+   std::string work_dir; ///< Where inputs and outputs are written; empty for a temporary directory
 };
 
 /// Takes the flags in \p accepted out of argv, lowering \p argc, and sets
@@ -35,7 +39,8 @@ struct BenchmarkOptions {
 /// A flag that is not accepted stays in argv, so Google Benchmark reports it as
 /// unrecognized. With --help, prints the accepted flags and leaves --help in
 /// argv for Google Benchmark to print its own. False, with the reason printed,
-/// when a value is malformed.
+/// when a value is malformed, a --sam or --ram file does not exist, or inputs
+/// that exclude each other are given: --sam with --reads, --ram with either.
 bool ParseBenchmarkFlags(int *argc, char **argv, unsigned accepted, BenchmarkOptions &opts);
 
 #endif // BENCHMARK_CONFIG_H

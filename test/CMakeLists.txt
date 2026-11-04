@@ -69,11 +69,28 @@ if(TARGET conversion_time_benchmark)
         COMMAND conversion_time_benchmark --reads=10,20 --threads=1,3 --benchmark_list_tests)
     set_tests_properties(benchmark_sweeps_reads_and_threads
         PROPERTIES PASS_REGULAR_EXPRESSION "reads:20/threads:3")
-    add_test(NAME benchmark_takes_regions_from_environment COMMAND region_query_benchmark --benchmark_list_tests)
+    add_test(NAME benchmark_takes_regions_from_environment
+        COMMAND region_query_benchmark --reads=1000 --benchmark_list_tests)
     set_tests_properties(benchmark_takes_regions_from_environment PROPERTIES
         ENVIRONMENT "RAMTOOLS_BENCH_REGIONS=chr1:1-10,chr2:1-10,chr3:1-10"
         PASS_REGULAR_EXPRESSION "RNTuple/2"
         FAIL_REGULAR_EXPRESSION "RNTuple/3")
+    # Inputs: a path must exist, and inputs given two ways are refused.
+    add_test(NAME benchmark_rejects_missing_sam COMMAND conversion_time_benchmark --sam=no_such_file.sam)
+    set_tests_properties(benchmark_rejects_missing_sam PROPERTIES PASS_REGULAR_EXPRESSION "no such file")
+    add_test(NAME benchmark_rejects_sam_with_reads
+        COMMAND conversion_time_benchmark --sam=${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt --reads=10)
+    set_tests_properties(benchmark_rejects_sam_with_reads PROPERTIES PASS_REGULAR_EXPRESSION "exclude each other")
+    # One run of each binary on a few synthetic records, in a temporary
+    # directory: the default path works without any dataset and nothing fails.
+    add_test(NAME benchmark_conversion_runs
+        COMMAND conversion_time_benchmark --reads=2000 --threads=1,2 --benchmark_min_time=1x)
+    add_test(NAME benchmark_region_query_runs
+        COMMAND region_query_benchmark --reads=5000 --benchmark_min_time=1x)
+    add_test(NAME benchmark_chromosome_split_runs
+        COMMAND chromosome_split_benchmark --reads=2000 --threads=1,2 --benchmark_min_time=1x)
+    set_tests_properties(benchmark_conversion_runs benchmark_region_query_runs benchmark_chromosome_split_runs
+        PROPERTIES FAIL_REGULAR_EXPRESSION "ERROR OCCURRED")
 endif()
 
 if(TARGET ramdump)

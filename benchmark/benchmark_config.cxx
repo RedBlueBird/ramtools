@@ -7,9 +7,11 @@
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -22,13 +24,16 @@ struct FlagSpec {
    const char *help;
 };
 
-constexpr std::array<FlagSpec, 6> kFlagSpecs{{
+constexpr std::array<FlagSpec, 8> kFlagSpecs{{
    {kFlagCompression, "--compression", "N", "ROOT compression code, algorithm*100+level"},
    {kFlagQuality, "--quality", "MODE", "lossless (rANS), fqzcomp, illumina or drop"},
    {kFlagReads, "--reads", "N[,N...]", "synthetic records, one benchmark per count"},
    {kFlagThreads, "--threads", "N[,N...]", "threads, one benchmark per count"},
    {kFlagRam, "--ram", "FILE", "RAM file written by samtoramntuple, or $RAMTOOLS_BENCH_RNTUPLE"},
-   {kFlagRegions, "--regions", "R[,R...]", "regions to query, or $RAMTOOLS_BENCH_REGIONS"},
+   {kFlagRegions, "--regions", "R[,R...]",
+    "regions to query, or $RAMTOOLS_BENCH_REGIONS (default: 1 kb to a whole reference)"},
+   {kFlagSam, "--sam", "FILE", "SAM file to run on, instead of synthetic records (not with --reads)"},
+   {kFlagWorkDir, "--work-dir", "DIR", "where inputs and outputs go, kept afterwards (default: a temporary directory)"},
 }};
 
 // ROOT compression code: algorithm*100+level, with algorithm 1 ZLIB, 2 LZMA,
@@ -121,6 +126,17 @@ bool ParseRegions(const std::string &text, std::vector<std::string> &regions)
    return true;
 }
 
+// A file that exists, so that a mistyped path fails here instead of timing a
+// converter or a query that has nothing to read.
+bool ParseFile(const std::string &text, std::string &path)
+{
+   std::error_code ec;
+   if (text.empty() || !std::filesystem::is_regular_file(text, ec))
+      return false;
+   path = text;
+   return true;
+}
+
 bool ParseValue(BenchmarkFlag flag, const std::string &value, BenchmarkOptions &opts)
 {
    switch (flag) {
@@ -128,14 +144,22 @@ bool ParseValue(BenchmarkFlag flag, const std::string &value, BenchmarkOptions &
    case kFlagQuality: return ParseQuality(value, opts.quality_policy);
    case kFlagReads: return ParsePositiveList(value, opts.reads);
    case kFlagThreads: return ParsePositiveList(value, opts.threads);
-   case kFlagRam:
+   case kFlagRam: return ParseFile(value, opts.ram);
+   case kFlagRegions: return ParseRegions(value, opts.regions);
+   case kFlagSam: return ParseFile(value, opts.sam);
+   case kFlagWorkDir:
       if (value.empty())
          return false;
-      opts.ram = value;
+      opts.work_dir = value;
       return true;
-   case kFlagRegions: return ParseRegions(value, opts.regions);
    }
    return false;
+}
+
+// What else than its form makes a value of this flag invalid.
+const char *InvalidBecause(BenchmarkFlag flag)
+{
+   return (flag == kFlagRam || flag == kFlagSam) ? ": no such file" : "";
 }
 
 std::string Join(const std::vector<int> &numbers)
@@ -181,6 +205,8 @@ std::string DefaultOf(BenchmarkFlag flag, const BenchmarkOptions &opts)
    case kFlagThreads: return Join(opts.threads);
    case kFlagRam: return opts.ram;
    case kFlagRegions: return Join(opts.regions);
+   case kFlagSam: return opts.sam;
+   case kFlagWorkDir: return opts.work_dir;
    }
    return "";
 }
@@ -240,15 +266,24 @@ bool ParseBenchmarkFlags(int *argc, char **argv, unsigned accepted, BenchmarkOpt
       }
       const std::string value = arg.substr(name.size() + 1);
       if (!ParseValue(match->flag, value, opts)) {
-         std::cerr << "invalid " << name << " value '" << value << "'\n";
+         std::cerr << "invalid " << name << " value '" << value << "'" << InvalidBecause(match->flag) << "\n";
          return false;
       }
       given |= match->flag;
    }
+   if ((given & kFlagSam) && (given & kFlagReads)) {
+      std::cerr << "--sam and --reads exclude each other: --reads sizes the synthetic input\n";
+      return false;
+   }
+   if ((given & kFlagRam) && (given & (kFlagSam | kFlagReads))) {
+      std::cerr << "--ram excludes --sam and --reads: the benchmark runs on the RAM file as it is\n";
+      return false;
+   }
    argv[kept] = nullptr; // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic): main()'s argv
    *argc = kept;
 
-   // The variables the region benchmark read before it took flags; a flag wins.
+   // The variables the region benchmark read before it took flags; a flag wins,
+   // and so does an input given another way.
    struct EnvFallback {
       BenchmarkFlag flag;
       const char *variable;
@@ -257,9 +292,12 @@ bool ParseBenchmarkFlags(int *argc, char **argv, unsigned accepted, BenchmarkOpt
         {EnvFallback{kFlagRam, "RAMTOOLS_BENCH_RNTUPLE"}, EnvFallback{kFlagRegions, "RAMTOOLS_BENCH_REGIONS"}}) {
       if (!(accepted & fallback.flag) || (given & fallback.flag))
          continue;
+      if (fallback.flag == kFlagRam && (given & (kFlagSam | kFlagReads)))
+         continue;
       const std::string value = Env(fallback.variable);
       if (!value.empty() && !ParseValue(fallback.flag, value, opts)) {
-         std::cerr << "invalid " << fallback.variable << " value '" << value << "'\n";
+         std::cerr << "invalid " << fallback.variable << " value '" << value << "'" << InvalidBecause(fallback.flag)
+                   << "\n";
          return false;
       }
    }
