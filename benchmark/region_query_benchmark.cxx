@@ -65,6 +65,7 @@ static void BM_Count(benchmark::State &state, const std::string &format, const C
    int64_t total_reads_processed = 0;
    int64_t reads_in_this_run = 0;
 
+   const PeakMemory memory;
    for ([[maybe_unused]] const auto &_ : state) {
       reads_in_this_run = count(region);
       if (reads_in_this_run < 0) {
@@ -73,6 +74,7 @@ static void BM_Count(benchmark::State &state, const std::string &format, const C
       }
       total_reads_processed += reads_in_this_run;
    }
+   memory.Report(state);
 
    // A time for a wrong count is not a result. Checked after the timing.
    if (!reference.name.empty() && reference.name != format) {
@@ -175,6 +177,7 @@ int main(int argc, char **argv)
    ::benchmark::Initialize(&argc, argv);
    if (::benchmark::ReportUnrecognizedArguments(argc, argv))
       return 1;
+   StartROOT();
    if (opts.reads.size() != 1) {
       std::cerr << "region_query_benchmark queries one file: give one --reads count\n";
       return 1;

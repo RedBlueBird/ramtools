@@ -56,6 +56,7 @@ static void BM_BamSplit(benchmark::State &state, const SamInput &input, const st
    const std::string sorted_bam = dir + "/bam_sorted.bam";
    const std::string prefix = dir + "/bam_split_";
 
+   const PeakMemory memory;
    for ([[maybe_unused]] const auto &_ : state) {
       // The last run's files stay, to be checked; removing them is not timed.
       state.PauseTiming();
@@ -66,6 +67,7 @@ static void BM_BamSplit(benchmark::State &state, const SamInput &input, const st
          return;
       }
    }
+   memory.Report(state);
 
    int64_t written = 0;
    for (const std::string &file : FilesWithPrefix(dir, "bam_split_")) {
@@ -90,6 +92,7 @@ BM_ChromosomeSplit(benchmark::State &state, const SamInput &input, const std::st
    // -split -threads N enables them.
    SetImplicitMT(static_cast<int>(state.range(0)));
 
+   const PeakMemory memory;
    for ([[maybe_unused]] const auto &_ : state) {
       // The last run's files stay, to be checked; removing them is not timed.
       state.PauseTiming();
@@ -98,6 +101,7 @@ BM_ChromosomeSplit(benchmark::State &state, const SamInput &input, const std::st
       const StdoutSilencer silence;
       samtoramntuple_split_by_chromosome(input.path.c_str(), prefix.c_str(), opts.compression, opts.quality_policy);
    }
+   memory.Report(state);
    SetImplicitMT(/*threads=*/1);
 
    int64_t written = 0;
@@ -123,6 +127,7 @@ int main(int argc, char **argv)
    ::benchmark::Initialize(&argc, argv);
    if (::benchmark::ReportUnrecognizedArguments(argc, argv))
       return 1;
+   StartROOT();
    const WorkDir dir(opts.work_dir);
 
    // Synthetic inputs are sorted, as aligned reads are before they are split;

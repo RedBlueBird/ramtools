@@ -7,6 +7,7 @@
 #include "rntuple/RAMNTupleRecord.h"
 
 #include <TROOT.h>
+#include <benchmark/benchmark.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -23,6 +24,9 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 
 StdoutSilencer::StdoutSilencer()
 {
@@ -47,6 +51,54 @@ StdoutSilencer::~StdoutSilencer()
    std::fflush(stdout);
    dup2(m_saved, STDOUT_FILENO);
    close(m_saved);
+}
+
+namespace {
+
+// A field of /proc/self/status in MiB, such as VmHWM (the peak) or VmRSS; -1
+// when there is none.
+double ProcStatusMiB(const std::string &field)
+{
+   std::ifstream status("/proc/self/status");
+   std::string line;
+   while (std::getline(status, line)) {
+      if (line.rfind(field + ":", 0) == 0)
+         return std::strtod(line.substr(field.size() + 1).c_str(), nullptr) / 1024.0; // kB
+   }
+   return -1;
+}
+
+} // namespace
+
+PeakMemory::PeakMemory()
+{
+#ifdef __GLIBC__
+   // Hand memory that earlier work freed back to the kernel first, so that this
+   // stretch starts from what is in use, not from what the allocator kept.
+   malloc_trim(0);
+#endif
+   std::ofstream clear_refs("/proc/self/clear_refs");
+   if (!(clear_refs << "5" << std::flush))
+      return;
+   m_startMiB = ProcStatusMiB("VmRSS");
+}
+
+void PeakMemory::Report(benchmark::State &state) const
+{
+   const double peak = ProcStatusMiB("VmHWM");
+   if (m_startMiB < 0 || peak < 0)
+      return;
+   state.counters["peak_mib"] = peak;
+   state.counters["start_mib"] = m_startMiB;
+}
+
+void StartROOT()
+{
+   const double before = ProcStatusMiB("VmRSS");
+   gROOT->GetVersion();
+   const double after = ProcStatusMiB("VmRSS");
+   if (before >= 0 && after >= 0)
+      benchmark::AddCustomContext("root_startup_mib", std::to_string(after - before));
 }
 
 WorkDir::WorkDir(const std::string &path)

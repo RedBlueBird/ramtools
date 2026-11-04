@@ -74,6 +74,7 @@ static void BM_RamColumns(benchmark::State &state, const std::string &ram, const
 {
    uint64_t flag_sum = 0;
    uint64_t rows = 0;
+   const PeakMemory memory;
    for ([[maybe_unused]] const auto &_ : state) {
       const auto file = RAMFile::Open(ram);
       if (!file) {
@@ -96,6 +97,7 @@ static void BM_RamColumns(benchmark::State &state, const std::string &ram, const
       }
       benchmark::DoNotOptimize(flag_sum);
    }
+   memory.Report(state);
    state.counters["columns"] = static_cast<double>(1 + columns.size());
    Report(state, "RAM", static_cast<int64_t>(rows), flag_sum, ram, expected);
 }
@@ -106,6 +108,7 @@ static void BM_RamFull(benchmark::State &state, const std::string &ram, const Ex
 {
    uint64_t flag_sum = 0;
    uint64_t rows = 0;
+   const PeakMemory memory;
    for ([[maybe_unused]] const auto &_ : state) {
       const auto file = RAMFile::Open(ram);
       if (!file) {
@@ -144,6 +147,7 @@ static void BM_RamFull(benchmark::State &state, const std::string &ram, const Ex
       benchmark::DoNotOptimize(bytes);
       benchmark::DoNotOptimize(flag_sum);
    }
+   memory.Report(state);
    Report(state, "RAM", static_cast<int64_t>(rows), flag_sum, ram, expected);
 }
 
@@ -152,12 +156,14 @@ static void BM_HtsScan(benchmark::State &state, const std::string &format, const
                        const std::string &ref, bool flagstat_fields, const Expected &expected)
 {
    ScanTotals totals;
+   const PeakMemory memory;
    for ([[maybe_unused]] const auto &_ : state) {
       if (!ScanRecords(path, ref, flagstat_fields, totals)) {
          state.SkipWithError("cannot scan " + path);
          return;
       }
    }
+   memory.Report(state);
    // The flagstat row of a CRAM is checked against the full scan of another
    // format, never against itself.
    Report(state, flagstat_fields ? format + " flagstat fields" : format, totals.records, totals.flag_sum, path,
@@ -175,6 +181,7 @@ int main(int argc, char **argv)
    ::benchmark::Initialize(&argc, argv);
    if (::benchmark::ReportUnrecognizedArguments(argc, argv))
       return 1;
+   StartROOT();
    if (opts.reads.size() != 1) {
       std::cerr << "columnar_read_benchmark scans one file per format: give one --reads count\n";
       return 1;

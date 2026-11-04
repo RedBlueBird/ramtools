@@ -8,6 +8,10 @@
 
 struct BenchmarkOptions;
 
+namespace benchmark {
+class State;
+} // namespace benchmark
+
 /// Sends standard output to /dev/null while it lives, so that what a converter
 /// or a query prints per call is not timed as terminal output. It redirects the
 /// file descriptor, which catches printf, std::cout and ROOT's own printing
@@ -25,6 +29,35 @@ public:
 private:
    int m_saved = -1; ///< A duplicate of the original stdout; -1 when nothing was redirected
 };
+
+/// The peak resident memory of this process over a stretch of a benchmark. On
+/// construction it resets the kernel's record of the peak (Linux's
+/// /proc/self/clear_refs), so the peak it reports is only what came after,
+/// every thread of the process included. Memory left from earlier benchmarks
+/// stays resident, so Report() gives the resident memory at the start as well;
+/// the peak above it is what the stretch cost, a little less when it reuses
+/// memory an earlier benchmark freed: run one benchmark per process
+/// (--benchmark_filter) to compare memory exactly. Where the kernel keeps no
+/// such record, nothing is reported.
+class PeakMemory {
+public:
+   PeakMemory();
+
+   /// Sets the counters peak_mib, the peak since construction, and start_mib,
+   /// the resident memory at construction, both in MiB. Call it right after the
+   /// timed loop, before any check of the results allocates.
+   void Report(benchmark::State &state) const;
+
+private:
+   double m_startMiB = -1; ///< -1 when the peak cannot be reset or read
+};
+
+/// Starts ROOT before any benchmark runs, so that no benchmark's time or memory
+/// takes in its one-time start-up, about 230 MiB, most of it the interpreter.
+/// Records the memory the start-up took in the run's context, as
+/// root_startup_mib, where the kernel reports it. Call it after
+/// benchmark::Initialize().
+void StartROOT();
 
 /// The directory a benchmark writes its inputs and outputs in. Given a path, it
 /// uses that directory, creating it if needed, and leaves it in place. Given

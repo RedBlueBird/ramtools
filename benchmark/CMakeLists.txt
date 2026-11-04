@@ -23,7 +23,9 @@ if(RAMTOOLS_BUILD_BENCHMARKS)
         ${CMAKE_CURRENT_SOURCE_DIR}
     )
 
-    target_link_libraries(benchmark_common PUBLIC ramcore sam_generator PkgConfig::htslib)
+    target_link_libraries(benchmark_common PUBLIC ramcore sam_generator PkgConfig::htslib benchmark::benchmark)
+    # Google Benchmark is an ExternalProject: its headers exist only once it is built.
+    add_dependencies(benchmark_common googlebenchmark)
 
     ROOT_EXECUTABLE(conversion_time_benchmark
         conversion_time_benchmark.cxx

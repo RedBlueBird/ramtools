@@ -48,6 +48,7 @@ BM_SamToRam(benchmark::State &state, const SamInput &input, const std::string &o
    const int threads = static_cast<int>(state.range(0));
    PrepareSamInput(input);
 
+   const PeakMemory memory;
    for ([[maybe_unused]] const auto &_ : state) {
       bool converted = false;
       {
@@ -59,6 +60,7 @@ BM_SamToRam(benchmark::State &state, const SamInput &input, const std::string &o
          return;
       }
    }
+   memory.Report(state);
    Report(state, input, input.path, output, RamRecords(output));
    std::remove(output.c_str());
 }
@@ -70,12 +72,14 @@ BM_SamToHts(benchmark::State &state, const SamInput &input, const std::string &o
    const int threads = static_cast<int>(state.range(0));
    PrepareSamInput(input);
 
+   const PeakMemory memory;
    for ([[maybe_unused]] const auto &_ : state) {
       if (!ConvertAlignments(input.path, output, threads, opts.ref)) {
          state.SkipWithError("the conversion of " + input.path + " to " + output + " failed");
          return;
       }
    }
+   memory.Report(state);
    ScanTotals written;
    if (!ScanRecords(output, opts.ref, /*flagstat_fields=*/false, written))
       written.records = -1;
@@ -97,6 +101,7 @@ static void BM_BamToRam(benchmark::State &state, const SamInput &input, const st
    // threads compress the pages, as bamtoramntuple -threads N enables them.
    SetImplicitMT(static_cast<int>(state.range(0)));
 
+   const PeakMemory memory;
    for ([[maybe_unused]] const auto &_ : state) {
       std::remove(output.c_str());
       {
@@ -111,6 +116,7 @@ static void BM_BamToRam(benchmark::State &state, const SamInput &input, const st
          return;
       }
    }
+   memory.Report(state);
    SetImplicitMT(/*threads=*/1);
    Report(state, input, bam, output, RamRecords(output));
    std::remove(output.c_str());
@@ -130,6 +136,7 @@ int main(int argc, char **argv)
    ::benchmark::Initialize(&argc, argv);
    if (::benchmark::ReportUnrecognizedArguments(argc, argv))
       return 1;
+   StartROOT();
    const WorkDir dir(opts.work_dir);
 
    std::cout << "Conversion Time Benchmark" << std::endl;

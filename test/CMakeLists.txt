@@ -102,6 +102,13 @@ if(TARGET conversion_time_benchmark)
         COMMAND region_query_benchmark --reads=5000 --regions=chr1:1000 --formats=ram,bam --benchmark_min_time=1x)
     set_tests_properties(benchmark_reports_disagreeing_counts
         PROPERTIES PASS_REGULAR_EXPRESSION "RAM counted [0-9]+ records in chr1:1000, BAM [0-9]+")
+    # Peak memory per benchmark, where the kernel can reset its record of it.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME benchmark_reports_peak_memory
+            COMMAND conversion_time_benchmark --reads=2000 --formats=ram --benchmark_min_time=1x)
+        set_tests_properties(benchmark_reports_peak_memory PROPERTIES
+            PASS_REGULAR_EXPRESSION "peak_mib=[0-9.]+[kMG]? +reads=" FAIL_REGULAR_EXPRESSION "ERROR OCCURRED")
+    endif()
     # The runner: every binary with the flags it takes, JSON per binary, and a
     # failure for a typo or for any benchmark that reports an error.
     set(runner bash ${CMAKE_SOURCE_DIR}/scripts/run_benchmark_suite.sh)
