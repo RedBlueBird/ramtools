@@ -2,6 +2,7 @@
 
 #include "rntuple/RAMNTupleRecord.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <climits>
@@ -24,7 +25,7 @@ struct FlagSpec {
    const char *help;
 };
 
-constexpr std::array<FlagSpec, 8> kFlagSpecs{{
+constexpr std::array<FlagSpec, 10> kFlagSpecs{{
    {kFlagCompression, "--compression", "N", "ROOT compression code, algorithm*100+level"},
    {kFlagQuality, "--quality", "MODE", "lossless (rANS), fqzcomp, illumina or drop"},
    {kFlagReads, "--reads", "N[,N...]", "synthetic records, one benchmark per count"},
@@ -34,6 +35,8 @@ constexpr std::array<FlagSpec, 8> kFlagSpecs{{
     "regions to query, or $RAMTOOLS_BENCH_REGIONS (default: 1 kb to a whole reference)"},
    {kFlagSam, "--sam", "FILE", "SAM file to run on, instead of synthetic records (not with --reads)"},
    {kFlagWorkDir, "--work-dir", "DIR", "where inputs and outputs go, kept afterwards (default: a temporary directory)"},
+   {kFlagRef, "--ref", "FASTA", "reference with every @SQ of the input, for the CRAM rows (none without it)"},
+   {kFlagFormats, "--formats", "F[,F...]", "formats to measure: ram, bam, cram, sam (default: all the inputs allow)"},
 }};
 
 // ROOT compression code: algorithm*100+level, with algorithm 1 ZLIB, 2 LZMA,
@@ -137,6 +140,21 @@ bool ParseFile(const std::string &text, std::string &path)
    return true;
 }
 
+bool ParseFormats(const std::string &text, std::vector<std::string> &formats)
+{
+   std::vector<std::string> parsed;
+   for (const std::string &format : SplitList(text)) {
+      const bool known = format == "ram" || format == "bam" || format == "cram" || format == "sam";
+      if (!known || std::find(parsed.begin(), parsed.end(), format) != parsed.end())
+         return false;
+      parsed.push_back(format);
+   }
+   if (parsed.empty())
+      return false;
+   formats = std::move(parsed);
+   return true;
+}
+
 bool ParseValue(BenchmarkFlag flag, const std::string &value, BenchmarkOptions &opts)
 {
    switch (flag) {
@@ -152,6 +170,8 @@ bool ParseValue(BenchmarkFlag flag, const std::string &value, BenchmarkOptions &
          return false;
       opts.work_dir = value;
       return true;
+   case kFlagRef: return ParseFile(value, opts.ref);
+   case kFlagFormats: return ParseFormats(value, opts.formats);
    }
    return false;
 }
@@ -159,7 +179,7 @@ bool ParseValue(BenchmarkFlag flag, const std::string &value, BenchmarkOptions &
 // What else than its form makes a value of this flag invalid.
 const char *InvalidBecause(BenchmarkFlag flag)
 {
-   return (flag == kFlagRam || flag == kFlagSam) ? ": no such file" : "";
+   return (flag == kFlagRam || flag == kFlagSam || flag == kFlagRef) ? ": no such file" : "";
 }
 
 std::string Join(const std::vector<int> &numbers)
@@ -207,6 +227,8 @@ std::string DefaultOf(BenchmarkFlag flag, const BenchmarkOptions &opts)
    case kFlagRegions: return Join(opts.regions);
    case kFlagSam: return opts.sam;
    case kFlagWorkDir: return opts.work_dir;
+   case kFlagRef: return opts.ref;
+   case kFlagFormats: return Join(opts.formats);
    }
    return "";
 }
@@ -275,6 +297,10 @@ bool ParseBenchmarkFlags(int *argc, char **argv, unsigned accepted, BenchmarkOpt
       std::cerr << "--sam and --reads exclude each other: --reads sizes the synthetic input\n";
       return false;
    }
+   if ((given & kFlagFormats) && WantsFormat(opts, "cram") && opts.ref.empty()) {
+      std::cerr << "--formats=cram needs --ref, the reference CRAM is encoded against\n";
+      return false;
+   }
    if ((given & kFlagRam) && (given & (kFlagSam | kFlagReads))) {
       std::cerr << "--ram excludes --sam and --reads: the benchmark runs on the RAM file as it is\n";
       return false;
@@ -302,4 +328,9 @@ bool ParseBenchmarkFlags(int *argc, char **argv, unsigned accepted, BenchmarkOpt
       }
    }
    return true;
+}
+
+bool WantsFormat(const BenchmarkOptions &opts, const std::string &format)
+{
+   return opts.formats.empty() || std::find(opts.formats.begin(), opts.formats.end(), format) != opts.formats.end();
 }

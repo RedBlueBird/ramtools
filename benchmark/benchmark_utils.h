@@ -2,6 +2,7 @@
 #define BENCHMARK_UTILS_H
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,7 @@ private:
 /// records generated into the work directory on first use.
 struct SamInput {
    std::string name; ///< "reads:N" for synthetic records, "sam" for --sam
+   std::string stem; ///< File name, without extension, for what is made from it in the work directory
    std::string path;
    int reads = 0; ///< Synthetic records to generate; 0 for --sam
    bool sorted = false;
@@ -64,8 +66,21 @@ std::vector<SamInput> SamInputs(const BenchmarkOptions &opts, const WorkDir &dir
 /// Generates \p input if it is synthetic and not there yet, outside any timing.
 void PrepareSamInput(const SamInput &input);
 
+/// Runs \p make the first time \p path is asked for in this process, and
+/// remembers whether it succeeded. A file made from an input is so never taken
+/// from an earlier run in a kept --work-dir, which may have had another input.
+bool MakeOnce(const std::string &path, const std::function<bool()> &make);
+
 /// The records in a SAM file, header lines not counted. Counted once per file.
 int64_t CountSamRecords(const std::string &path);
+
+/// The size of a file in MiB; 0 when it does not exist.
+double FileMiB(const std::string &path);
+
+/// Turns ROOT's implicit multithreading on with \p threads threads, as the
+/// converters' -threads does for the steps that compress pages on it, or off
+/// for 1.
+void SetImplicitMT(int threads);
 
 /// The sum of the sizes of the files in \p dir whose names start with \p prefix.
 uint64_t TotalSizeWithPrefix(const std::string &dir, const std::string &prefix);

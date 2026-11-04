@@ -3,7 +3,6 @@
 #include "benchmark_config.h"
 #include "benchmark_utils.h"
 #include "ramcore/SamToNTuple.h"
-#include <TROOT.h>
 #include <cstdint>
 #include <string>
 
@@ -22,16 +21,6 @@ static void SetRates(benchmark::State &state, const SamInput &input)
    state.counters["reads/s"] = benchmark::Counter(static_cast<double>(records), benchmark::Counter::kIsRate);
 }
 
-// ROOT's implicit threads compress the split's pages, as samtoramntuple -split
-// -threads N enables them; 1 disables them.
-static void SetImplicitMT(int threads)
-{
-   if (ROOT::IsImplicitMTEnabled())
-      ROOT::DisableImplicitMT();
-   if (threads > 1)
-      ROOT::EnableImplicitMT(threads);
-}
-
 static void BM_BamSplit(benchmark::State &state, const SamInput &input, const std::string &dir)
 {
    PrepareSamInput(input);
@@ -40,7 +29,7 @@ static void BM_BamSplit(benchmark::State &state, const SamInput &input, const st
    const std::string prefix = dir + "/bam_split_";
 
    for ([[maybe_unused]] const auto &_ : state) {
-      if (!SamToSortedBam(input.path, sorted_bam, threads) || !SplitBam(sorted_bam, prefix, threads)) {
+      if (!ConvertSorted(input.path, sorted_bam, threads) || !SplitBam(sorted_bam, prefix, threads)) {
          state.SkipWithError("the BAM split failed on " + input.path);
          break;
       }
@@ -57,6 +46,8 @@ BM_ChromosomeSplit(benchmark::State &state, const SamInput &input, const std::st
 {
    PrepareSamInput(input);
    const std::string prefix = dir + "/ram_split";
+   // ROOT's implicit threads compress the split's pages, as samtoramntuple
+   // -split -threads N enables them.
    SetImplicitMT(static_cast<int>(state.range(0)));
 
    for ([[maybe_unused]] const auto &_ : state) {

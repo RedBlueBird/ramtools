@@ -9,7 +9,7 @@
 
 /// The command-line flags a benchmark binary accepts, besides Google
 /// Benchmark's own. Combine them with | to say which flags a binary takes.
-enum BenchmarkFlag : uint8_t {
+enum BenchmarkFlag : uint16_t {
    kFlagCompression = 1U << 0, ///< --compression=N
    kFlagQuality = 1U << 1,     ///< --quality=lossless|fqzcomp|illumina|drop
    kFlagReads = 1U << 2,       ///< --reads=N[,N...]
@@ -18,6 +18,8 @@ enum BenchmarkFlag : uint8_t {
    kFlagRegions = 1U << 5,     ///< --regions=REGION[,REGION...], or $RAMTOOLS_BENCH_REGIONS
    kFlagSam = 1U << 6,         ///< --sam=FILE, instead of synthetic records
    kFlagWorkDir = 1U << 7,     ///< --work-dir=DIR
+   kFlagRef = 1U << 8,         ///< --ref=FASTA, which CRAM is encoded against
+   kFlagFormats = 1U << 9,     ///< --formats=ram,bam,cram,sam
 };
 
 /// What a benchmark runs on. The members a binary does not take a flag for
@@ -32,7 +34,14 @@ struct BenchmarkOptions {
    std::vector<std::string> regions;
    std::string sam;      ///< A SAM file to run on; empty for synthetic records, one input per count in reads
    std::string work_dir; ///< Where inputs and outputs are written; empty for a temporary directory
+   std::string ref;      ///< The reference FASTA for CRAM; empty for no CRAM
+   /// The formats to measure, each of "ram", "bam", "cram" and "sam" at most
+   /// once; empty for every format the inputs allow.
+   std::vector<std::string> formats;
 };
+
+/// Whether \p format is among \p opts.formats, or \p opts.formats is empty.
+bool WantsFormat(const BenchmarkOptions &opts, const std::string &format);
 
 /// Takes the flags in \p accepted out of argv, lowering \p argc, and sets
 /// \p opts from them; the rest of argv is left for benchmark::Initialize().

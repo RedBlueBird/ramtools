@@ -3,11 +3,14 @@
 #include "benchmark_config.h"
 #include "generate_sam_benchmark.h"
 
+#include <TROOT.h>
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <random>
@@ -87,11 +90,11 @@ std::string WorkDir::File(const std::string &name) const
 std::vector<SamInput> SamInputs(const BenchmarkOptions &opts, const WorkDir &dir, bool sorted)
 {
    if (!opts.sam.empty())
-      return {SamInput{"sam", opts.sam, 0, false}};
+      return {SamInput{"sam", "input", opts.sam, 0, false}};
    std::vector<SamInput> inputs;
    for (const int reads : opts.reads) {
       const std::string stem = "synthetic_" + std::to_string(reads) + (sorted ? "_sorted" : "");
-      inputs.push_back(SamInput{"reads:" + std::to_string(reads), dir.File(stem + ".sam"), reads, sorted});
+      inputs.push_back(SamInput{"reads:" + std::to_string(reads), stem, dir.File(stem + ".sam"), reads, sorted});
    }
    return inputs;
 }
@@ -104,6 +107,17 @@ void PrepareSamInput(const SamInput &input)
       GenerateSortedSAMFile(input.path, input.reads);
    else
       GenerateSAMFile(input.path, input.reads);
+}
+
+bool MakeOnce(const std::string &path, const std::function<bool()> &make)
+{
+   static std::map<std::string, bool> made;
+   const auto known = made.find(path);
+   if (known != made.end())
+      return known->second;
+   const bool ok = make();
+   made[path] = ok;
+   return ok;
 }
 
 int64_t CountSamRecords(const std::string &path)
@@ -121,6 +135,21 @@ int64_t CountSamRecords(const std::string &path)
    }
    counted[path] = records;
    return records;
+}
+
+double FileMiB(const std::string &path)
+{
+   std::error_code ec;
+   const auto size = std::filesystem::file_size(path, ec);
+   return ec ? 0.0 : static_cast<double>(size) / (1024.0 * 1024.0);
+}
+
+void SetImplicitMT(int threads)
+{
+   if (ROOT::IsImplicitMTEnabled())
+      ROOT::DisableImplicitMT();
+   if (threads > 1)
+      ROOT::EnableImplicitMT(threads);
 }
 
 namespace {

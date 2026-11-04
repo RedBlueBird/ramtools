@@ -73,14 +73,19 @@ if(TARGET conversion_time_benchmark)
         COMMAND region_query_benchmark --reads=1000 --benchmark_list_tests)
     set_tests_properties(benchmark_takes_regions_from_environment PROPERTIES
         ENVIRONMENT "RAMTOOLS_BENCH_REGIONS=chr1:1-10,chr2:1-10,chr3:1-10"
-        PASS_REGULAR_EXPRESSION "RNTuple/2"
-        FAIL_REGULAR_EXPRESSION "RNTuple/3")
+        PASS_REGULAR_EXPRESSION "RegionQuery/r2/RAM"
+        FAIL_REGULAR_EXPRESSION "RegionQuery/r3/")
     # Inputs: a path must exist, and inputs given two ways are refused.
     add_test(NAME benchmark_rejects_missing_sam COMMAND conversion_time_benchmark --sam=no_such_file.sam)
     set_tests_properties(benchmark_rejects_missing_sam PROPERTIES PASS_REGULAR_EXPRESSION "no such file")
     add_test(NAME benchmark_rejects_sam_with_reads
         COMMAND conversion_time_benchmark --sam=${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt --reads=10)
     set_tests_properties(benchmark_rejects_sam_with_reads PROPERTIES PASS_REGULAR_EXPRESSION "exclude each other")
+    # CRAM is encoded against a reference, and is never measured without one.
+    add_test(NAME benchmark_rejects_cram_without_ref COMMAND conversion_time_benchmark --formats=ram,cram)
+    set_tests_properties(benchmark_rejects_cram_without_ref PROPERTIES PASS_REGULAR_EXPRESSION "needs --ref")
+    add_test(NAME benchmark_rejects_repeated_format COMMAND conversion_time_benchmark --formats=bam,bam)
+    set_tests_properties(benchmark_rejects_repeated_format PROPERTIES PASS_REGULAR_EXPRESSION "invalid --formats")
     # One run of each binary on a few synthetic records, in a temporary
     # directory: the default path works without any dataset and nothing fails.
     add_test(NAME benchmark_conversion_runs
