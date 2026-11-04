@@ -13,12 +13,24 @@ endif()
 if(RAMTOOLS_BUILD_BENCHMARKS)
     include(GoogleBenchmark)
 
+    add_library(benchmark_common STATIC
+        benchmark_config.cxx
+        benchmark_utils.cxx
+    )
+
+    target_include_directories(benchmark_common PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    target_link_libraries(benchmark_common PUBLIC ramcore)
+
     ROOT_EXECUTABLE(sam_to_ram_benchmark
         sam_to_ram_benchmark.cxx
         LIBRARIES
             benchmark::benchmark
             ramcore
             sam_generator
+            benchmark_common
     )
 
     ROOT_EXECUTABLE(conversion_time_benchmark
@@ -27,6 +39,7 @@ if(RAMTOOLS_BUILD_BENCHMARKS)
             benchmark::benchmark
             ramcore
             sam_generator
+            benchmark_common
     )
 
     ROOT_EXECUTABLE(region_query_benchmark
@@ -35,6 +48,7 @@ if(RAMTOOLS_BUILD_BENCHMARKS)
             benchmark::benchmark
             ramcore
             sam_generator
+            benchmark_common
     )
 
     ROOT_EXECUTABLE(chromosome_split_benchmark
@@ -43,6 +57,7 @@ if(RAMTOOLS_BUILD_BENCHMARKS)
             benchmark::benchmark
             ramcore
             sam_generator
+            benchmark_common
     )
 
     install(TARGETS sam_to_ram_benchmark conversion_time_benchmark region_query_benchmark chromosome_split_benchmark

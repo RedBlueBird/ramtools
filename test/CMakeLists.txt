@@ -51,6 +51,31 @@ if(TARGET samtoramntuple)
         PROPERTIES PASS_REGULAR_EXPRESSION "-fqzcomp compresses lossless qualities")
 endif()
 
+if(TARGET conversion_time_benchmark)
+    # The benchmarks check their flags as the converters do, before anything is
+    # measured: a typo must not give numbers for the default settings.
+    add_test(NAME benchmark_rejects_bad_compression COMMAND conversion_time_benchmark --compression=999)
+    add_test(NAME benchmark_rejects_trailing_reads COMMAND conversion_time_benchmark --reads=1000x)
+    add_test(NAME benchmark_rejects_empty_threads COMMAND conversion_time_benchmark --threads=2,)
+    add_test(NAME benchmark_rejects_bad_quality COMMAND conversion_time_benchmark --quality=lossy)
+    set_tests_properties(benchmark_rejects_bad_compression benchmark_rejects_trailing_reads
+        benchmark_rejects_empty_threads benchmark_rejects_bad_quality
+        PROPERTIES PASS_REGULAR_EXPRESSION "invalid --[a-z]+ value")
+    # A flag a binary does not take is left to Google Benchmark, which rejects it.
+    add_test(NAME benchmark_rejects_flag_it_does_not_take COMMAND region_query_benchmark --compression=505)
+    set_tests_properties(benchmark_rejects_flag_it_does_not_take
+        PROPERTIES PASS_REGULAR_EXPRESSION "unrecognized command-line flag")
+    add_test(NAME benchmark_sweeps_reads_and_threads
+        COMMAND conversion_time_benchmark --reads=10,20 --threads=1,3 --benchmark_list_tests)
+    set_tests_properties(benchmark_sweeps_reads_and_threads
+        PROPERTIES PASS_REGULAR_EXPRESSION "reads:20/threads:3")
+    add_test(NAME benchmark_takes_regions_from_environment COMMAND region_query_benchmark --benchmark_list_tests)
+    set_tests_properties(benchmark_takes_regions_from_environment PROPERTIES
+        ENVIRONMENT "RAMTOOLS_BENCH_REGIONS=chr1:1-10,chr2:1-10,chr3:1-10"
+        PASS_REGULAR_EXPRESSION "RNTuple/2"
+        FAIL_REGULAR_EXPRESSION "RNTuple/3")
+endif()
+
 if(TARGET ramdump)
     add_ramcore_test(ramdump_test ramdump_test.cxx)
     add_dependencies(ramdump_test samtoramntuple ramdump ramstats)

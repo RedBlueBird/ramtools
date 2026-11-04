@@ -1,4 +1,6 @@
 #include <benchmark/benchmark.h>
+#include "benchmark_config.h"
+#include "benchmark_utils.h"
 #include "ramcore/SamToNTuple.h"
 #include "generate_sam_benchmark.h"
 #include <cstdio>
@@ -137,26 +139,19 @@ static void BM_SamtoolsSplitThreaded(benchmark::State &state)
    state.counters["reads/s"] = benchmark::Counter(num_reads, benchmark::Counter::kIsRate);
 }
 
-static void BM_ChromosomeSplit(benchmark::State &state)
+static void BM_ChromosomeSplit(benchmark::State &state, const BenchmarkOptions &opts)
 {
    int num_reads = state.range(0);
    std::string sam_file = "bench_split_par_" + std::to_string(num_reads) + ".sam";
 
    GenerateSAMFile(sam_file, num_reads);
 
-   FILE *old_stdout = stdout;
-   FILE *old_stderr = stderr;
-
    for (auto _ : state) {
-      stdout = fopen("/dev/null", "w");
-      stderr = fopen("/dev/null", "w");
-
-      samtoramntuple_split_by_chromosome(sam_file.c_str(), "bench_split_par_out", 505, 1);
-
-      fclose(stdout);
-      fclose(stderr);
-      stdout = old_stdout;
-      stderr = old_stderr;
+      {
+         const StdoutSilencer silence;
+         samtoramntuple_split_by_chromosome(sam_file.c_str(), /*output_prefix=*/"bench_split_par_out", opts.compression,
+                                            opts.quality_policy);
+      }
 
       state.counters["size_MB"] = GetTotalFileSize("bench_split_par_out_") / (1024.0 * 1024.0);
       CleanupFiles("bench_split_par_out_");
@@ -166,17 +161,30 @@ static void BM_ChromosomeSplit(benchmark::State &state)
    state.counters["reads/s"] = benchmark::Counter(num_reads, benchmark::Counter::kIsRate);
 }
 
-BENCHMARK(BM_SamtoolsSplit)->Arg(100000)->Arg(500000)->Arg(1000000)->Unit(benchmark::kMillisecond);
+int main(int argc, char **argv)
+{
+   BenchmarkOptions opts;
+   opts.reads = {100000, 500000, 1000000};
+   opts.threads = {2, 4};
+   if (!ParseBenchmarkFlags(&argc, argv, kFlagCompression | kFlagQuality | kFlagReads | kFlagThreads, opts))
+      return 1;
 
-BENCHMARK(BM_SamtoolsSplitThreaded)
-   ->Args({100000, 2})
-   ->Args({100000, 4})
-   ->Args({500000, 2})
-   ->Args({500000, 4})
-   ->Args({1000000, 2})
-   ->Args({1000000, 4})
-   ->Unit(benchmark::kMillisecond);
+   auto *samtools = ::benchmark::RegisterBenchmark("BM_SamtoolsSplit", BM_SamtoolsSplit);
+   auto *samtools_threaded = ::benchmark::RegisterBenchmark("BM_SamtoolsSplitThreaded", BM_SamtoolsSplitThreaded);
+   auto *split = ::benchmark::RegisterBenchmark("BM_ChromosomeSplit", BM_ChromosomeSplit, opts);
+   for (const int reads : opts.reads) {
+      samtools->Arg(reads);
+      for (const int threads : opts.threads)
+         samtools_threaded->Args({reads, threads});
+      split->Arg(reads);
+   }
+   for (auto *bench : {samtools, samtools_threaded, split})
+      bench->Unit(benchmark::kMillisecond);
 
-BENCHMARK(BM_ChromosomeSplit)->Arg(100000)->Arg(500000)->Arg(1000000)->Unit(benchmark::kMillisecond);
-
-BENCHMARK_MAIN();
+   ::benchmark::Initialize(&argc, argv);
+   if (::benchmark::ReportUnrecognizedArguments(argc, argv))
+      return 1;
+   ::benchmark::RunSpecifiedBenchmarks();
+   ::benchmark::Shutdown();
+   return 0;
+}
